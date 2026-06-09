@@ -1,5 +1,5 @@
 NVCC := nvcc
-ARCH := sm_86
+ARCH := sm_75
 SRC_DIR := src
 BIN_DIR := bin
 INCLUDE := include
