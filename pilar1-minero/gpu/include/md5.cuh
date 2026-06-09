@@ -74,22 +74,20 @@ __device__ void md5_hash(const unsigned char* input, size_t len, unsigned char o
     };
 
     size_t padded_len = ((len + 8) / 64 + 1) * 64;
-    uint32_t block[16];
+    uint64_t bit_len = (uint64_t)len * 8;
 
     for (size_t offset = 0; offset < padded_len; offset += 64) {
-        for (int i = 0; i < 16; i++) {
-            block[i] = 0;
-        }
+        uint32_t block[16] = {0};
+        unsigned char* b = (unsigned char*)block;
 
         for (int i = 0; i < 64; i++) {
             size_t pos = offset + i;
             if (pos < len) {
-                ((unsigned char*)block)[i] = input[pos];
+                b[i] = input[pos];
             } else if (pos == len) {
-                ((unsigned char*)block)[i] = 0x80;
-            } else if (pos == padded_len - 8) {
-                ((uint64_t*)block)[14] = (uint64_t)len * 8;
-                break;
+                b[i] = 0x80;
+            } else if (pos >= padded_len - 8) {
+                b[i] = (bit_len >> ((pos - (padded_len - 8)) * 8)) & 0xff;
             }
         }
 
