@@ -1,0 +1,6 @@
+[allowlist]
+description = "allowlisted files"
+paths = [
+    ".gitignore",
+    ".gitleaks.toml",
+]

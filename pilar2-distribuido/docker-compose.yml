@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  coordinator:
+    build: ./nct-coordinator
+    depends_on: [rabbitmq, redis]
+    environment:
+      - RABBITMQ_URL=amqp://rabbitmq:5672
+      - REDIS_URL=redis://redis:6379
+
+  transaction-pool:
+    build: ./transaction-pool
+    depends_on: [rabbitmq, redis]
+    environment:
+      - RABBITMQ_URL=amqp://rabbitmq:5672
+      - REDIS_URL=redis://redis:6379
+
+  worker:
+    build: ./worker
+    depends_on: [rabbitmq]
+    environment:
+      - RABBITMQ_URL=amqp://rabbitmq:5672
+    deploy:
+      replicas: 2
