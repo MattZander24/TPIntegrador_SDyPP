@@ -1,0 +1,85 @@
+"""Interfaz de mensajería e implementación en memoria (para tests).
+
+La interfaz es agnóstica del transporte: cada servicio recibe un objeto
+``Messaging`` y registra callbacks. En producción se inyecta ``RabbitMQMessaging``;
+en tests, ``InMemoryBus``, que despacha de forma síncrona y determinística.
+"""
+
+from __future__ import annotations
+
+from typing import Callable
+
+# --- Nombres de los flujos (mismos para in-memory y RabbitMQ) ---------------
+QUEUE_PROPUESTAS = "propuestas"            # nodo → NCT
+EXCHANGE_DESAFIO = "desafio_activo"        # NCT → red (topic)
+DESAFIO_ROUTING_KEY = "desafio.activo"
+DESAFIO_BINDING_KEY = "desafio.#"
+QUEUE_RESPUESTA_NONCE = "respuesta_nonce"  # red → NCT
+QUEUE_TAREAS = "tareas_trp"                # TrP → workers (interno)
+QUEUE_KEEPALIVE = "keepalive_trp"          # workers → TrP (interno)
+
+Handler = Callable[[dict], None]
+
+
+class Messaging:
+    """Contrato común. Las implementaciones concretas overridean estos métodos."""
+
+    # -- publicación --
+    def publish_proposal(self, law: dict) -> None: raise NotImplementedError
+    def publish_challenge(self, challenge: dict) -> None: raise NotImplementedError
+    def publish_nonce_response(self, solution: dict) -> None: raise NotImplementedError
+    def publish_task(self, task: dict) -> None: raise NotImplementedError
+    def publish_keepalive(self, keepalive: dict) -> None: raise NotImplementedError
+
+    # -- suscripción (registra callback; se ejecutan al consumir) --
+    def on_proposal(self, handler: Handler) -> None: raise NotImplementedError
+    def on_challenge(self, handler: Handler) -> None: raise NotImplementedError
+    def on_nonce_response(self, handler: Handler) -> None: raise NotImplementedError
+    def on_task(self, handler: Handler) -> None: raise NotImplementedError
+    def on_keepalive(self, handler: Handler) -> None: raise NotImplementedError
+
+    # -- ciclo de vida --
+    # tick: callback periódico para trabajo no disparado por mensajes
+    # (apertura de ventana, chequeo de deadline, emisión de keep-alives).
+    def start_consuming(self, tick: Callable[[], None] | None = None,
+                        tick_interval: float = 1.0) -> None:
+        raise NotImplementedError
+
+    def close(self) -> None: pass
+
+
+class InMemoryBus(Messaging):
+    """Bus en proceso: ``publish_*`` despacha sincrónicamente a los handlers.
+
+    Útil para el test e2e sin broker. La semántica de "el primero gana" del NCT
+    no se modela acá (eso lo decide el propio NCT al verificar y descartar
+    soluciones tardías); el bus sólo entrega los mensajes.
+    """
+
+    def __init__(self):
+        self._handlers: dict[str, list[Handler]] = {}
+
+    def _register(self, stream: str, handler: Handler) -> None:
+        self._handlers.setdefault(stream, []).append(handler)
+
+    def _dispatch(self, stream: str, payload: dict) -> None:
+        for handler in list(self._handlers.get(stream, [])):
+            handler(payload)
+
+    # publicación
+    def publish_proposal(self, law): self._dispatch(QUEUE_PROPUESTAS, law)
+    def publish_challenge(self, challenge): self._dispatch(EXCHANGE_DESAFIO, challenge)
+    def publish_nonce_response(self, solution): self._dispatch(QUEUE_RESPUESTA_NONCE, solution)
+    def publish_task(self, task): self._dispatch(QUEUE_TAREAS, task)
+    def publish_keepalive(self, keepalive): self._dispatch(QUEUE_KEEPALIVE, keepalive)
+
+    # suscripción
+    def on_proposal(self, handler): self._register(QUEUE_PROPUESTAS, handler)
+    def on_challenge(self, handler): self._register(EXCHANGE_DESAFIO, handler)
+    def on_nonce_response(self, handler): self._register(QUEUE_RESPUESTA_NONCE, handler)
+    def on_task(self, handler): self._register(QUEUE_TAREAS, handler)
+    def on_keepalive(self, handler): self._register(QUEUE_KEEPALIVE, handler)
+
+    def start_consuming(self, tick=None, tick_interval: float = 1.0) -> None:
+        # En el bus en memoria el consumo es inmediato en publish; no hay loop.
+        pass
