@@ -1,4 +1,16 @@
-version: "3.9"
+# VoxChain — Pilar 2. `docker compose up` levanta RabbitMQ, Redis, el NCT, el
+# transaction-pool y 2 workers. El contexto de build es la raíz del repo (..)
+# para que cada imagen pueda copiar el paquete `common` y, el worker, el minero
+# CPU de Pilar 1. Sin secretos en el archivo: credenciales por variables de
+# entorno (ver common/config.py). RabbitMQ usa el usuario guest por defecto, apto
+# sólo para desarrollo local; en la nube (Pilar 3) se inyectan vía Vault/Secrets.
+name: voxchain-pilar2
+
+x-app-env: &app-env
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+  REDIS_URL: redis://redis:6379/0
+  N_ZEROS: "4"
+  HEALTH_PORT: "8080"
 
 services:
   rabbitmq:
@@ -6,30 +18,69 @@ services:
     ports:
       - "5672:5672"
       - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   redis:
     image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
     ports:
       - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   coordinator:
-    build: ./nct-coordinator
-    depends_on: [rabbitmq, redis]
+    build:
+      context: ..
+      dockerfile: pilar2-distribuido/nct-coordinator/Dockerfile
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
-      - RABBITMQ_URL=amqp://rabbitmq:5672
-      - REDIS_URL=redis://redis:6379
+      <<: *app-env
+      WINDOW_SECONDS_PROMULGACION: "120"
+      WINDOW_SECONDS_DEROGACION: "180"
+    ports:
+      - "8081:8080"   # health endpoint del NCT
 
   transaction-pool:
-    build: ./transaction-pool
-    depends_on: [rabbitmq, redis]
+    build:
+      context: ..
+      dockerfile: pilar2-distribuido/transaction-pool/Dockerfile
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
     environment:
-      - RABBITMQ_URL=amqp://rabbitmq:5672
-      - REDIS_URL=redis://redis:6379
+      <<: *app-env
+      NONCE_SPACE: "50000000"
+      FRAGMENT_SIZE: "1000000"
+    ports:
+      - "8082:8080"   # health endpoint del TrP
 
   worker:
-    build: ./worker
-    depends_on: [rabbitmq]
+    build:
+      context: ..
+      dockerfile: pilar2-distribuido/worker/Dockerfile
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
     environment:
-      - RABBITMQ_URL=amqp://rabbitmq:5672
+      <<: *app-env
+      WORKER_CAPACITY: "1"
     deploy:
       replicas: 2
+    # Sin publicar puerto de host: hay 2 réplicas; el health es accesible en la
+    # red interna (puerto 8080 del contenedor).
+
+volumes:
+  redis-data:

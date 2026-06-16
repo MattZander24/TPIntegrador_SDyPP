@@ -1,0 +1,12 @@
+# El contexto de build de Pilar 2 es la raíz del repo; excluimos lo pesado/irrelevante.
+.git
+**/.venv
+**/venv
+**/__pycache__
+**/*.pyc
+**/node_modules
+**/.pytest_cache
+pilar1-minero/gpu/bin
+*.tfstate
+*.tfstate.*
+.terraform
