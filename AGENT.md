@@ -222,62 +222,62 @@ No es un requisito del TP. Si se incluye, su justificación en VoxChain sería a
 ## 8. Diagrama de arquitectura
 
 ```
-                            ┌─────────────────────┐
+                            ┌──────────────────────┐
                             │     Individuos       │
-                            │ (clave pública/priv.) │
+                            │ (clave pública/priv.)│
                             └──────────┬───────────┘
                                        │ propone ley / vota
                                        ▼
                      ┌──────────────────────────────┐
-                     │   Descubrimiento P2P           │
-                     │ (nodos y pools se descubren     │
-                     │  entre sí; NO vía el NCT)        │
+                     │   Descubrimiento P2P         │
+                     │ (nodos y pools se descubre   │
+                     │  entre sí; NO vía el NCT)    │
                      └──────────────┬───────────────┘
                                     │
-              ┌─────────────────────┼─────────────────────┐
-              ▼                     ▼                     ▼
-      ┌───────────────┐     ┌───────────────┐     ┌───────────────┐
-      │  Nodo minero    │     │   Nodo pool     │     │ Nodo pool-of- │
-      │ (CUDA/CPU)      │◄────┤ (agrega mineros)│◄────┤ pools (nivel 2)│
-      └───────┬────────┘     └───────┬────────┘     └───────┬────────┘
-              │                      │                      │
-              └──────────────┬───────┴──────────────────────┘
+              ┌─────────────────────┼───────────────────────┐
+              ▼                     ▼                       ▼
+      ┌───────────────┐     ┌─────────────────┐     ┌────────────────┐
+      │  Nodo minero  │     │   Nodo pool     │     │ Nodo pool-of-  │
+      │ (CUDA/CPU)    │◄────┤ (agrega mineros)│◄────┤ pools (nivel 2)│
+      └───────┬───────┘     └───────┬─────────┘     └───────┬────────┘
+              │                     │                       │
+              └──────────────┬──────┴───────────────────────┘
                              │ keep-alive / nonce encontrado
                              ▼
-                  ┌───────────────────────┐
+                  ┌──────────────────────────┐
                   │      RabbitMQ            │
                   │  - cola: propuestas      │
-                  │  - tópico: desafío activo │
-                  │  - cola: respuesta nonce  │
-                  └───────────┬────────────┘
+                  │  - tópico: desafío activo│
+                  │  - cola: respuesta nonce │
+                  └───────────┬──────────────┘
                               │
                               ▼
-                  ┌───────────────────────┐
+                  ┌──────────────────────────┐
                   │   NCT (Coordinador)      │
-                  │  - cola de leyes          │
-                  │    (round-robin autor)    │
-                  │  - abre/cierra ventana     │
-                  │  - verifica nonce          │
-                  │  - Bully-por-esfuerzo si    │
-                  │    el NCT activo cae        │
-                  └───────────┬────────────┘
+                  │  - cola de leyes         │
+                  │    (round-robin autor)   │
+                  │  - abre/cierra ventana   │
+                  │  - verifica nonce        │
+                  │  - Bully-por-esfuerzo si │
+                  │    el NCT activo cae     │
+                  └───────────┬──────────────┘
                               │ bloque verificado
                               ▼
-                  ┌───────────────────────┐
-                  │        Redis             │
+                  ┌────────────────────────────┐
+                  │        Redis               │
                   │  - cadena de bloques       │
                   │  - cooldowns por autor     │
                   │  - estado de ventana activa│
-                  └───────────┬────────────┘
+                  └───────────┬────────────────┘
                               │
-                  ┌───────────┴────────────┐
+                  ┌───────────┴─────────────┐
                   ▼                         ▼
-          ┌───────────────┐       ┌────────────────┐
-          │     Vault        │       │  MinIO (opc.)    │
-          │ (secrets infra:  │       │ (texto completo   │
-          │  Redis/RabbitMQ  │       │  de las leyes)     │
-          │  credentials)    │       │                    │
-          └───────────────┘       └────────────────┘
+          ┌─────────────────┐       ┌────────────────┐
+          │     Vault       │       │  MinIO (opc.)  │
+          │ (secrets infra: │       │ (texto completo│
+          │  Redis/RabbitMQ │       │  de las leyes) │
+          │  credentials)   │       │                │
+          └─────────────────┘       └────────────────┘
 
   Plataforma: Kubernetes (GKE) vía OpenTofu — mínimo 2 réplicas
   por servicio. Nodegroup dedicado a infraestructura (Redis,
