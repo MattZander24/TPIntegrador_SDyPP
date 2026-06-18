@@ -19,30 +19,36 @@ por carga de red.
   actualiza el `status` de la ley y avanza a la siguiente ventana.
 - Cierra por **deadline**: ley → `discarded`, ventana → `expired_pending`, sin
   reencolar.
-- Sucesión por esfuerzo (Bully mejorado, `nct/bully.py`): piezas de PoW listas;
-  coordinación distribuida pendiente (`xfail`).
+- Sucesión por esfuerzo (Bully mejorado, `nct/bully.py`): si el NCT primario
+  falla, los standbys detectan la ausencia de heartbeat y resuelven un
+  mini-desafío PoW. El primero en resolver asume como nuevo líder.
 
 ## Estructura
 
 | Archivo                | Contenido |
 |------------------------|-----------|
-| `nct/coordinator.py`   | Núcleo (cola, ventanas, verificación, sellado). Agnóstico de transporte/backend. |
+| `nct/coordinator.py`   | Núcleo (cola, ventanas, verificación, sellado). Agnóstico de transporte/backend. Incluye publicación de heartbeats y conciencia de líder/seguidor. |
 | `nct/queue_logic.py`   | Lógica pura: round-robin y cálculo de cooldown. |
-| `nct/bully.py`         | Mini-PoW de elección de NCT (coordinación distribuida pendiente). |
-| `main.py`              | Cablea RabbitMQ + Redis + health endpoint + loop. |
+| `nct/bully.py`         | Mini-PoW de elección de NCT: `solve_mini_challenge`, `elect_new_nct` y `run_distributed_election`. |
+| `nct/monitor.py`       | Monitor de heartbeats del líder; dispara elección distribuida si detecta timeout. |
+| `main.py`              | Cablea RabbitMQ + Redis + health endpoint + loop. Soporta modo `primary` y `standby`. |
 
 ## Ejecución
 
 ```bash
-# vía docker-compose (recomendado), desde pilar2-distribuido/
-docker compose up --build coordinator
+# NCT primario + standby vía docker-compose (recomendado), desde pilar2-distribuido/
+docker compose up --build coordinator coordinator-standby
 
-# directo (requiere RabbitMQ y Redis accesibles)
+# directo como primario (requiere RabbitMQ y Redis accesibles)
 RABBITMQ_URL=amqp://guest:guest@localhost:5672/ REDIS_URL=redis://localhost:6379/0 \
-PYTHONPATH=..:. N_ZEROS=4 python main.py
+PYTHONPATH=..:. N_ZEROS=4 NCT_MODE=primary NCT_ID=nct-1 python main.py
+
+# directo como standby
+RABBITMQ_URL=amqp://guest:guest@localhost:5672/ REDIS_URL=redis://localhost:6379/0 \
+PYTHONPATH=..:. NCT_MODE=standby NCT_ID=nct-standby-1 ELECTION_N_ZEROS=2 python main.py
 ```
 
-Health: `GET :8080/health` → `{"nct":"ok","redis":"ok","rabbitmq":"ok"}`.
+Health: `GET :8080/health` → `{"nct":"ok","redis":"ok","rabbitmq":"ok","mode":"primary"}`.
 
 ## Configuración (variables de entorno)
 
@@ -54,6 +60,11 @@ Health: `GET :8080/health` → `{"nct":"ok","redis":"ok","rabbitmq":"ok"}`.
 | `COOLDOWN_WINDOWS_NEW` | `N_ZEROS` | Cooldown tras proponer (en ventanas). |
 | `COOLDOWN_WINDOWS_REPROPOSED` | `2*N_ZEROS` | Cooldown mayor por reproposición idéntica. |
 | `RABBITMQ_URL`, `REDIS_URL`, `HEALTH_PORT` | ver compose | Infraestructura. |
+| `NCT_MODE` | `primary` | `primary` (procesa colas + heartbeats) o `standby` (monitorea heartbeats) |
+| `NCT_ID` | `nct-default` | Identificador único del NCT en la elección distribuida |
+| `ELECTION_N_ZEROS` | 3 | Dificultad del mini-PoW de elección del Bully distribuido |
+| `HEARTBEAT_INTERVAL` | 3 | Segundos entre heartbeats del leader |
+| `HEARTBEAT_TIMEOUT` | 12 | Segundos sin heartbeat para declarar caída del líder |
 
 ## Decisiones de diseño
 
@@ -64,3 +75,9 @@ Health: `GET :8080/health` → `{"nct":"ok","redis":"ok","rabbitmq":"ok"}`.
   `winning_node_or_pool == author_pubkey` de la ley.
 - **Derogación**: reutiliza la ley promulgada cambiando su `action` y reencolándola;
   al sellar pasa a `repealed`.
+- **Liderazgo vía Redis SETNX**: el ganador de la elección escribe `nct:leader`
+  con TTL, renovado por heartbeats. El mecanismo evita split-brain incluso si
+  dos candidatos publican solución casi simultáneamente.
+- **Heartbeats sobre topic exchange**: cada standby NCT recibe una copia del
+  heartbeat en su cola exclusiva, permitiendo monitoreo descentralizado sin
+  estado compartido en RabbitMQ.

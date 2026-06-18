@@ -23,6 +23,10 @@ from .base import (
     QUEUE_RESPUESTA_NONCE,
     QUEUE_TAREAS,
     QUEUE_KEEPALIVE,
+    EXCHANGE_HEARTBEAT,
+    HEARTBEAT_ROUTING_KEY,
+    HEARTBEAT_BINDING_KEY,
+    QUEUE_ELECTION,
 )
 
 log = logging.getLogger("voxchain.messaging")
@@ -62,7 +66,10 @@ class RabbitMQMessaging(Messaging):
         ch.queue_declare(queue=QUEUE_RESPUESTA_NONCE, durable=True)
         ch.queue_declare(queue=QUEUE_TAREAS, durable=True)
         ch.queue_declare(queue=QUEUE_KEEPALIVE, durable=True)
+        ch.queue_declare(queue=QUEUE_ELECTION, durable=True)
         ch.exchange_declare(exchange=EXCHANGE_DESAFIO, exchange_type="topic",
+                            durable=True)
+        ch.exchange_declare(exchange=EXCHANGE_HEARTBEAT, exchange_type="topic",
                             durable=True)
         ch.basic_qos(prefetch_count=1)
 
@@ -87,6 +94,10 @@ class RabbitMQMessaging(Messaging):
         self._publish("", QUEUE_RESPUESTA_NONCE, solution)
     def publish_task(self, task): self._publish("", QUEUE_TAREAS, task)
     def publish_keepalive(self, keepalive): self._publish("", QUEUE_KEEPALIVE, keepalive)
+    def publish_heartbeat(self, hb):
+        self._publish(EXCHANGE_HEARTBEAT, HEARTBEAT_ROUTING_KEY, hb)
+    def publish_election_claim(self, claim):
+        self._publish("", QUEUE_ELECTION, claim)
 
     # -- suscripción --------------------------------------------------------
     def on_proposal(self, handler): self._handlers[QUEUE_PROPUESTAS] = handler
@@ -94,15 +105,18 @@ class RabbitMQMessaging(Messaging):
     def on_task(self, handler): self._handlers[QUEUE_TAREAS] = handler
     def on_keepalive(self, handler): self._handlers[QUEUE_KEEPALIVE] = handler
     def on_challenge(self, handler): self._handlers[EXCHANGE_DESAFIO] = handler
+    def on_heartbeat(self, handler): self._handlers[EXCHANGE_HEARTBEAT] = handler
+    def on_election_claim(self, handler): self._handlers[QUEUE_ELECTION] = handler
 
     def _bind_consumers(self) -> None:
         for stream, handler in self._handlers.items():
-            if stream == EXCHANGE_DESAFIO:
-                # cola exclusiva por suscriptor, ligada al topic
+            if stream in (EXCHANGE_DESAFIO, EXCHANGE_HEARTBEAT):
                 result = self._ch.queue_declare(queue="", exclusive=True)
                 qname = result.method.queue
-                self._ch.queue_bind(exchange=EXCHANGE_DESAFIO, queue=qname,
-                                    routing_key=DESAFIO_BINDING_KEY)
+                binding_key = (DESAFIO_BINDING_KEY if stream == EXCHANGE_DESAFIO
+                               else HEARTBEAT_BINDING_KEY)
+                self._ch.queue_bind(exchange=stream, queue=qname,
+                                    routing_key=binding_key)
             else:
                 qname = stream
             self._ch.basic_consume(queue=qname,

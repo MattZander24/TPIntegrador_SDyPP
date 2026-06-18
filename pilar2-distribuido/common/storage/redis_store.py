@@ -209,3 +209,33 @@ class VoxChainStore:
 
     def chain_length(self) -> int:
         return self.r.llen("chain")
+
+    # ---- liderazgo del NCT (Bully distribuido, AGENT.md 4) ----------------
+    def try_acquire_leadership(self, candidate_id: str, ttl: int = 30) -> bool:
+        """Intenta adquirir el liderazgo del NCT vía SETNX.
+
+        Devuelve True si este candidato ganó la elección. El lock expira
+        después de ``ttl`` segundos (el líder debe renovarlo con heartbeats).
+        """
+        acquired = self.r.set("nct:leader", candidate_id, nx=True, ex=ttl)
+        return bool(acquired)
+
+    def renew_leadership(self, candidate_id: str, ttl: int = 30) -> bool:
+        """Renueva el liderazgo: sólo el líder actual puede extender su TTL."""
+        # Usamos una transacción Lua para verificar que seguimos siendo el líder.
+        lua = """
+        local current = redis.call("GET", "nct:leader")
+        if current == ARGV[1] then
+            redis.call("EXPIRE", "nct:leader", ARGV[2])
+            return 1
+        end
+        return 0
+        """
+        ok = self.r.eval(lua, 0, candidate_id, ttl)
+        return bool(ok)
+
+    def get_leader(self) -> str | None:
+        return self.r.get("nct:leader")
+
+    def clear_leadership(self) -> None:
+        self.r.delete("nct:leader")

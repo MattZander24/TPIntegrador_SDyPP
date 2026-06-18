@@ -18,6 +18,12 @@ QUEUE_RESPUESTA_NONCE = "respuesta_nonce"  # red → NCT
 QUEUE_TAREAS = "tareas_trp"                # TrP → workers (interno)
 QUEUE_KEEPALIVE = "keepalive_trp"          # workers → TrP (interno)
 
+# Flujos del Bully distribuido (AGENT.md 4, P2):
+EXCHANGE_HEARTBEAT = "nct.heartbeat"       # NCT activo → backups (topic)
+HEARTBEAT_ROUTING_KEY = "nct.heartbeat.live"
+HEARTBEAT_BINDING_KEY = "nct.heartbeat.#"
+QUEUE_ELECTION = "nct_election"            # backups → backups (cola)
+
 Handler = Callable[[dict], None]
 
 
@@ -30,6 +36,8 @@ class Messaging:
     def publish_nonce_response(self, solution: dict) -> None: raise NotImplementedError
     def publish_task(self, task: dict) -> None: raise NotImplementedError
     def publish_keepalive(self, keepalive: dict) -> None: raise NotImplementedError
+    def publish_heartbeat(self, hb: dict) -> None: raise NotImplementedError
+    def publish_election_claim(self, claim: dict) -> None: raise NotImplementedError
 
     # -- suscripción (registra callback; se ejecutan al consumir) --
     def on_proposal(self, handler: Handler) -> None: raise NotImplementedError
@@ -37,6 +45,8 @@ class Messaging:
     def on_nonce_response(self, handler: Handler) -> None: raise NotImplementedError
     def on_task(self, handler: Handler) -> None: raise NotImplementedError
     def on_keepalive(self, handler: Handler) -> None: raise NotImplementedError
+    def on_heartbeat(self, handler: Handler) -> None: raise NotImplementedError
+    def on_election_claim(self, handler: Handler) -> None: raise NotImplementedError
 
     # -- ciclo de vida --
     # tick: callback periódico para trabajo no disparado por mensajes
@@ -72,6 +82,8 @@ class InMemoryBus(Messaging):
     def publish_nonce_response(self, solution): self._dispatch(QUEUE_RESPUESTA_NONCE, solution)
     def publish_task(self, task): self._dispatch(QUEUE_TAREAS, task)
     def publish_keepalive(self, keepalive): self._dispatch(QUEUE_KEEPALIVE, keepalive)
+    def publish_heartbeat(self, hb): self._dispatch(EXCHANGE_HEARTBEAT, hb)
+    def publish_election_claim(self, claim): self._dispatch(QUEUE_ELECTION, claim)
 
     # suscripción
     def on_proposal(self, handler): self._register(QUEUE_PROPUESTAS, handler)
@@ -79,6 +91,8 @@ class InMemoryBus(Messaging):
     def on_nonce_response(self, handler): self._register(QUEUE_RESPUESTA_NONCE, handler)
     def on_task(self, handler): self._register(QUEUE_TAREAS, handler)
     def on_keepalive(self, handler): self._register(QUEUE_KEEPALIVE, handler)
+    def on_heartbeat(self, handler): self._register(EXCHANGE_HEARTBEAT, handler)
+    def on_election_claim(self, handler): self._register(QUEUE_ELECTION, handler)
 
     def start_consuming(self, tick=None, tick_interval: float = 1.0) -> None:
         # En el bus en memoria el consumo es inmediato en publish; no hay loop.

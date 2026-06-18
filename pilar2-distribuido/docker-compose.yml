@@ -50,8 +50,26 @@ services:
       <<: *app-env
       WINDOW_SECONDS_PROMULGACION: "120"
       WINDOW_SECONDS_DEROGACION: "180"
+      NCT_MODE: "primary"
+      NCT_ID: "nct-primary"
     ports:
       - "8081:8080"   # health endpoint del NCT
+
+  coordinator-standby:
+    build:
+      context: ..
+      dockerfile: pilar2-distribuido/nct-coordinator/Dockerfile
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *app-env
+      NCT_MODE: "standby"
+      NCT_ID: "nct-standby-1"
+      ELECTION_N_ZEROS: "2"
+    # Sin puerto de host: sólo red interna
 
   transaction-pool:
     build:

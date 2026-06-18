@@ -75,13 +75,21 @@ NCT):
 | 4 | `tareas_trp`    | cola | TrP → workers   | desafío + `range_min, range_max` (rango de nonces) |
 | 5 | `keepalive_trp` | cola | workers → TrP   | `worker_id, capacity, has_gpu, ts` |
 
+**Dos flujos del Bully distribuido para failover del NCT** (AGENT.md 4):
+
+| # | Nombre            | Tipo            | Dirección            | Contenido |
+|---|-------------------|-----------------|----------------------|-----------|
+| 6 | `nct.heartbeat`   | exchange *topic*| NCT activo → backups | `nct_id, ts, active_window_id, last_block_hash` |
+| 7 | `nct_election`    | cola            | backups → backups    | `candidate_id, nonce, seed, n_zeros` |
+
 ---
 
 ## Componentes
 
 | Servicio                                   | Rol |
 |--------------------------------------------|-----|
-| [`nct-coordinator/`](nct-coordinator/)     | NCT: cola round-robin, cooldown, apertura/cierre de ventana, verificación de nonce y sellado del bloque |
+| [`nct-coordinator/`](nct-coordinator/)     | NCT **primario**: cola round-robin, cooldown, apertura/cierre de ventana, verificación de nonce, sellado del bloque y publicación de heartbeats |
+| [`nct-coordinator/`](nct-coordinator/) (standby) | NCT **standby**: monitorea heartbeats del líder; si falla, dispara elección distribuida y asume como nuevo líder |
 | [`transaction-pool/`](transaction-pool/)   | TrP: fragmenta el espacio de nonces (bolsa de tareas), trackea capacidad por keep-alives |
 | [`worker/`](worker/)                        | Worker: mina el rango asignado invocando el minero de Pilar 1 (GPU/CPU) y publica el nonce |
 | `common/`                                   | Paquete compartido: `blockchain`, `storage` (Redis), `messaging` (RabbitMQ), health, logging, config |

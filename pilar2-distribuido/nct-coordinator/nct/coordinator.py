@@ -39,7 +39,9 @@ def _iso(epoch: float) -> str:
 class NCTCoordinator:
     def __init__(self, messaging, store, *, n_zeros: int,
                  window_seconds_promulgacion: int, window_seconds_derogacion: int,
-                 cooldown_new: int, cooldown_reproposed: int, clock=time.time):
+                 cooldown_new: int, cooldown_reproposed: int, clock=time.time,
+                 nct_id: str = "nct", is_leader: bool = True,
+                 heartbeat_interval: float = 0.0):
         self.m = messaging
         self.store = store
         self.n_zeros = n_zeros
@@ -50,11 +52,15 @@ class NCTCoordinator:
         self.cooldown_new = cooldown_new
         self.cooldown_reproposed = cooldown_reproposed
         self.now = clock
+        self.nct_id = nct_id
+        self.is_leader = is_leader
+        self.heartbeat_interval = heartbeat_interval
 
         # Estado en memoria de la ventana activa (no se persiste para recuperación:
         # ante caída del NCT la ventana se pierde, AGENT.md 4).
         self._last_author = None
         self._active = None  # dict con datos de la ventana en curso, o None
+        self._last_heartbeat_pub = 0.0
 
     # -- registro de handlers ----------------------------------------------
     def wire(self) -> None:
@@ -63,6 +69,9 @@ class NCTCoordinator:
 
     # -- flujo 1: propuestas (nodo → NCT) ----------------------------------
     def handle_proposal(self, law: dict) -> None:
+        if not self.is_leader:
+            log.debug("propuesta ignorada (no somos el líder)")
+            return
         author = law.get("author_pubkey")
         text_hash = law.get("text_hash")
         action = law.get("action", ACTION_PROMULGACION)
@@ -167,6 +176,9 @@ class NCTCoordinator:
 
     # -- flujo 3: respuesta_nonce (red → NCT) ------------------------------
     def handle_nonce_response(self, sol: dict) -> None:
+        if not self.is_leader:
+            log.debug("nonce ignorado (no somos el líder)")
+            return
         if self._active is None:
             log.info("nonce descartado: no hay ventana activa (%s)", sol)
             return
@@ -239,7 +251,34 @@ class NCTCoordinator:
                  active["voting_window_id"], active["law_id"])
         self.maybe_open_window()
 
+    def become_leader(self) -> None:
+        """Transiciona este NCT de standby a líder tras ganar la elección."""
+        log.info("asumiendo como líder NCT (%s)", self.nct_id)
+        self.is_leader = True
+        self.store.clear_active_window()
+        self._active = None
+        # Si hay leyes pendientes en Redis, abrimos la primera ventana.
+        self.maybe_open_window()
+
     # -- tick periódico para el loop de consumo ----------------------------
     def tick(self) -> None:
         self.check_deadline()
         self.maybe_open_window()
+        self._maybe_publish_heartbeat()
+
+    def _maybe_publish_heartbeat(self) -> None:
+        if not self.is_leader or self.heartbeat_interval <= 0:
+            return
+        now = self.now()
+        if now - self._last_heartbeat_pub < self.heartbeat_interval:
+            return
+        self._last_heartbeat_pub = now
+        # Renovar liderazgo en Redis.
+        self.store.renew_leadership(self.nct_id)
+        self.m.publish_heartbeat({
+            "nct_id": self.nct_id,
+            "ts": now,
+            "active_window_id": (self._active["voting_window_id"]
+                                 if self._active else None),
+            "last_block_hash": self.store.last_block_hash(),
+        })

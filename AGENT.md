@@ -123,6 +123,11 @@ Sin cambios respecto al enunciado base del TP: el minero GPU/CPU calcula hashes 
 2. `NCT → red (tópico)`: al abrir una ventana, el NCT publica el desafío activo (`law_id`, `n_zeros`, `deadline`, `partial_hash_base`). Todos los nodos/pools suscritos lo reciben simultáneamente.
 3. `red → NCT (cola de respuesta)`: el primer nodo/pool que encuentra el nonce válido publica la solución. El NCT verifica y descarta soluciones tardías para la misma ventana.
 
+Más dos flujos para el Bully distribuido (AGENT.md 4):
+
+6. `NCT activo → backups (tópico, nct.heartbeat)`: heartbeat periódico del NCT primario. Los standbys suscritos detectan su ausencia.
+7. `backups → backups (cola, nct_election)`: claims de la elección distribuida. Los candidatos publican su nonce solución y el primero válido en Redis gana.
+
 **P3 (Redis — estado de la cadena):** ver esquema en sección 7.
 
 **P4 (NCT):** responsabilidades acotadas respecto al TP base:
@@ -291,6 +296,7 @@ No es un requisito del TP. Si se incluye, su justificación en VoxChain sería a
 
 - **Sybil:** el sistema no verifica identidad real. Un individuo puede generar múltiples claves y proponer/votar como si fuera varios. Mitigación futura (DNI) fuera de alcance.
 - **Pérdida de estado en falla del NCT:** la ventana en curso se pierde íntegramente al caer el NCT; el cómputo invertido por la red hasta ese momento no se aprovecha.
+- **Split-brain del NCT:** si una partición de red separa al NCT primario de los standbys sin que el primario falle realmente, ambos pueden operar como líderes simultáneamente. El primario verifica en cada tick que su liderazgo en Redis sigue vigente (`renew_leadership`), y si descubre que otro NCT adquirió el liderazgo, ejecuta `step_down()`. Esta detección no es instantánea; hay una ventana de solapamiento.
 - **Concentración de poder:** el diseño favorece estructuralmente a pools grandes sobre mineros individuales, igual que las blockchains reales de PoW. No se mitiga — se documenta como observación de diseño y se discute cualitativamente en el informe, sin pretender un estudio estadístico riguroso de la distribución de poder computacional en la población (fuera de alcance del TP).
 - **MinIO (si se implementa):** no hay garantía de que el texto en MinIO no se borre o modifique fuera de la blockchain; solo la verificación de hash por parte de terceros detecta la alteración a posteriori, no la previene.
 
@@ -299,7 +305,65 @@ No es un requisito del TP. Si se incluye, su justificación en VoxChain sería a
 ## 10. Convenciones para agentes de IA que trabajen en este repo
 
 - Usar esta terminología exacta en código y commits: `law` (no "proposal" ni "bill" salvo en comentarios aclaratorios), `voting_window`, `n_zeros_required`, `NCT`, `pool`, `cooldown`.
-- No introducir ajuste dinámico de dificultad por carga de red — es una decisión de diseño explícita que la dificultad sea fija (n / n+1). Si se sugiere una optimización en esa línea, marcarla como pregunta abierta para el equipo, no implementarla directamente.
+- La dificultad es fija: `n` para promulgar, `n+1` para derogar. Está demostrado (ver sección 11) que cualquier intento de ajuste dinámico autónomo es gameable o requiere una complejidad excesiva. El ajuste se realiza externamente (operador humano o Pilar 3) con conocimiento de la población de mineros.
 - No implementar verificación de identidad real (DNI, OAuth, etc.) sin discusión explícita — está documentado como fuera de alcance.
-- Cualquier nuevo tipo de mensaje en RabbitMQ debe respetar los tres flujos descritos en la sección 5 (Pilar 2 / P2). Si se necesita un cuarto flujo, documentarlo acá antes de implementarlo.
+- Cualquier nuevo tipo de mensaje en RabbitMQ debe respetar los flujos descritos en la sección 5 (Pilar 2 / P2). Si se necesita un nuevo flujo, documentarlo acá antes de implementarlo.
 - Las claves privadas de los individuos nunca deben persistirse en Redis, Vault, ni en ningún servicio de backend. Si código nuevo intenta hacer esto, es un error de diseño y debe rechazarse.
+
+---
+
+## 11. Análisis de diseño: dificultad fija vs. dinámica
+
+### 11.1 El trilema del ajuste de dificultad
+
+Todo sistema PoW enfrenta tres propiedades deseables y mutuamente excluyentes:
+
+| Propiedad | Significado |
+|---|---|
+| **Simple** | Pocas reglas, comportamiento predecible, fácil de razonar |
+| **Autónomo** | Se ajusta sin intervención externa ante cambios en la red |
+| **No gameable** | Ningún actor puede manipular la dificultad en su beneficio |
+
+Se pueden elegir **dos**:
+
+| Opción | Simple | Autónomo | No gameable |
+|---|---|---|---|
+| **Fijo + operador externo** (VoxChain) | ✅ | ❌ | ✅ |
+| **Autónomo + simple** (basado en comportamiento) | ✅ | ✅ | ❌ |
+| **Autónomo + no gameable** (basado en tiempo real contra reloj de pared) | ❌ | ✅ | ✅ |
+
+### 11.2 Por qué se descartó el ajuste autónomo + simple
+
+Se consideró un mecanismo donde el NCT ajustara `n` basándose en el tiempo de resolución de ventanas exitosas (promedio móvil contra un target). El diseño propuesto era:
+
+- Solo las ventanas con nonce encontrado alimentan el promedio.
+- Si el promedio es < 50% del target y `n < MAX` → `n += 1`
+- Si el promedio es > 200% del target y `n > MIN` → `n -= 1`
+- Las expiraciones no cuentan (una ley que no genera consenso no debería abaratar la dificultad).
+
+Sin embargo, se identificó que incluso esta regla es gameable:
+
+1. Un actor con múltiples identidades Sybil propone leyes impopulares (texto basura).
+2. Otros actores (coordinados) se niegan a minarlas.
+3. Si se incluye una válvula de escape que reduzca `n` ante N expiraciones consecutivas, el atacante puede hacer expirar ventanas hasta bajar la dificultad.
+4. Una vez baja `n`, promulga su ley real con menos esfuerzo del que debería costar.
+
+Se exploró una válvula de escape para bootstrap y contracción de red (N expiraciones consecutivas → bajar `n`), pero se concluyó que cualquier regla basada en el comportamiento de los actores es potencialmente explotable por coordinación externa.
+
+### 11.3 Decisión final
+
+**Dificultad fija configurable externamente.** El valor de `n` se define al desplegar el sistema (variable de entorno `N_ZEROS`) en función del conocimiento que el operador tiene de la población de mineros. Si la población cambia significativamente, el operador (o un pipeline de Pilar 3) actualiza el valor. El algoritmo de consenso no negocia su dificultad.
+
+Esto es consistente con la filosofía del sistema: VoxChain no pretende ser justo ni auto-regulado. Es una herramienta de gobierno donde las reglas son explícitas y no cambian solas.
+
+### 11.4 Split-brain del NCT
+
+El Bully distribuido (sección 4) mitiga la caída del NCT pero introduce un riesgo de split-brain si el primario no cae realmente sino que sufre una partición de red.
+
+**Mecanismo de detección:** en cada `tick()`, el NCT primario verifica que su liderazgo en Redis sigue vigente mediante `renew_leadership()`. Si la operación falla (porque otro NCT adquirió el lock), ejecuta `step_down()`:
+
+- `is_leader = False`
+- Limpia `_active` (la ventana en curso se pierde — AGENT.md 4)
+- Deja de publicar heartbeats
+
+No hay detección de doble liderazgo más allá de Redis; la ventana de solapamiento es de hasta `HEARTBEAT_INTERVAL` segundos, aceptada como limitación conocida.
