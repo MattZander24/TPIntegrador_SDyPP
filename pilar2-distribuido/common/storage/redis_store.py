@@ -72,7 +72,9 @@ class VoxChainStore:
     def save_law(self, *, law_id: str, author_pubkey: str, text_hash: str,
                  created_at: str, status: str = LawStatus.PENDING_QUEUE,
                  action: str = "promulgacion",
-                 text_ref: Optional[str] = None) -> None:
+                 text_ref: Optional[str] = None,
+                 text_compressed: Optional[str] = None,
+                 text_original_len: int = 0) -> None:
         # `action` es la acción que la próxima ventana de esta ley ejecutará.
         # Una derogación reutiliza la ley promulgada existente cambiando su action.
         self.r.hset(f"law:{law_id}", mapping=_clean({
@@ -80,6 +82,8 @@ class VoxChainStore:
             "author_pubkey": author_pubkey,
             "text_hash": text_hash,
             "text_ref": text_ref,
+            "text_compressed": text_compressed,
+            "text_original_len": str(text_original_len) if text_original_len else None,
             "status": status,
             "action": action,
             "created_at": created_at,

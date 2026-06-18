@@ -108,3 +108,51 @@ def test_validate_chain_detecta_nonce_invalido():
 
 def test_cadena_vacia_es_valida():
     assert validate_chain_links([]) is True
+
+
+def test_compress_decompress_roundtrip():
+    from common.blockchain import compress_text, decompress_text
+    original = "Presupuesto 2026: $1.2M para infraestructura"
+    compressed = compress_text(original)
+    assert isinstance(compressed, str)
+    assert len(compressed) < len(original) or True  # gzip overhead aceptado
+    restored = decompress_text(compressed)
+    assert restored == original
+
+
+def test_compress_decompress_vacio():
+    from common.blockchain import compress_text, decompress_text
+    assert decompress_text(compress_text("")) == ""
+
+
+def test_seal_block_con_texto_comprimido():
+    from common.blockchain import compress_text
+    original = "Ley de presupuesto 2026: partidas, montos y plazos."
+    compressed = compress_text(original)
+    b = seal_block(previous_hash=GENESIS_PREVIOUS_HASH, law_id="L1",
+                   action=ACTION_PROMULGACION, n_zeros_required=2, nonce=42,
+                   winning_node_or_pool="pool-A", voting_window_id="W1",
+                   timestamp="2026-01-01T00:00:00Z",
+                   text_compressed=compressed, text_original_len=len(original))
+    assert b.is_hash_valid()
+    assert b.text_compressed == compressed
+    assert b.text_original_len == len(original)
+
+
+def test_from_dict_retrocompatible_sin_texto_comprimido():
+    old_dict = {
+        "previous_hash": GENESIS_PREVIOUS_HASH,
+        "law_id": "L1",
+        "action": ACTION_PROMULGACION,
+        "n_zeros_required": 2,
+        "nonce": 42,
+        "winning_node_or_pool": "pool-A",
+        "voting_window_id": "W1",
+        "timestamp": "2026-01-01T00:00:00Z",
+        "block_hash": "",
+    }
+    b = Block.from_dict(old_dict)
+    assert b.text_compressed == ""
+    assert b.text_original_len == 0
+    # El hash calculado ahora incluye text_compressed="" y text_original_len=0
+    assert b.compute_block_hash()

@@ -92,20 +92,27 @@ class NCTCoordinator:
                      author[:12], cd["cooldown_until_window"])
             return
 
+        text_compressed = law.get("text_compressed", "")
+        text_original_len = int(law.get("text_original_len", 0))
+
         if action == ACTION_DEROGACION:
             self._enqueue_derogacion(law_id, author, action)
         else:
-            self._enqueue_promulgacion(law_id, author, text_hash, created_at)
+            self._enqueue_promulgacion(law_id, author, text_hash, created_at,
+                                       text_compressed, text_original_len)
 
         self.maybe_open_window()
 
-    def _enqueue_promulgacion(self, law_id, author, text_hash, created_at) -> None:
+    def _enqueue_promulgacion(self, law_id, author, text_hash, created_at,
+                              text_compressed="", text_original_len=0) -> None:
         # Reproposición idéntica (3.5): mismo hash de texto que algo descartado.
         reason = classify_proposal(self.store.is_text_hash_discarded(text_hash))
         self.store.save_law(law_id=law_id, author_pubkey=author,
                             text_hash=text_hash, created_at=created_at,
                             status=LawStatus.PENDING_QUEUE,
-                            action=ACTION_PROMULGACION)
+                            action=ACTION_PROMULGACION,
+                            text_compressed=text_compressed,
+                            text_original_len=text_original_len)
         self.store.enqueue_law(law_id)
         until = cooldown_until(self.store.current_window_number(), reason,
                                cooldown_new=self.cooldown_new,
@@ -211,12 +218,17 @@ class NCTCoordinator:
     def _seal(self, active: dict, nonce: int, winner: str) -> None:
         action = active["action"]
         law_id = active["law_id"]
+        law = self.store.get_law(law_id) or {}
+        text_compressed = str(law.get("text_compressed", ""))
+        text_original_len = int(law.get("text_original_len", 0))
         block = seal_block(
             previous_hash=self.store.last_block_hash(),
             law_id=law_id, action=action,
             n_zeros_required=active["n_zeros_required"], nonce=nonce,
             winning_node_or_pool=winner or "desconocido",
             voting_window_id=active["voting_window_id"], timestamp=_iso(self.now()),
+            text_compressed=text_compressed,
+            text_original_len=text_original_len,
         )
         self.store.append_block(block)
         self.store.set_window_result(active["voting_window_id"],

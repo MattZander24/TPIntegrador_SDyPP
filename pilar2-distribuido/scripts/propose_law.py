@@ -18,13 +18,13 @@ import uuid
 from datetime import datetime, timezone
 
 from common import config
-from common.blockchain import ACTION_PROMULGACION
+from common.blockchain import ACTION_PROMULGACION, compress_text
 from common.messaging import build_rabbitmq
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Proponer una ley a VoxChain")
-    ap.add_argument("--text", default=None, help="texto de la ley (se hashea)")
+    ap.add_argument("--text", default=None, help="texto de la ley (se hashea y comprime)")
     ap.add_argument("--text-hash", default=None,
                     help="hash del texto ya calculado (alternativa a --text)")
     ap.add_argument("--author", required=True, help="author_pubkey del proponente")
@@ -34,10 +34,14 @@ def main() -> None:
                     choices=["promulgacion", "derogacion"])
     args = ap.parse_args()
 
-    if args.text_hash:
-        text_hash = args.text_hash
-    elif args.text:
+    if args.text:
         text_hash = hashlib.sha256(args.text.encode()).hexdigest()
+        text_compressed = compress_text(args.text)
+        text_original_len = len(args.text)
+    elif args.text_hash:
+        text_hash = args.text_hash
+        text_compressed = ""
+        text_original_len = 0
     else:
         ap.error("hace falta --text o --text-hash")
 
@@ -45,6 +49,8 @@ def main() -> None:
         "law_id": args.law_id or f"ley-{uuid.uuid4().hex[:8]}",
         "author_pubkey": args.author,
         "text_hash": text_hash,
+        "text_compressed": text_compressed,
+        "text_original_len": text_original_len,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "action": args.action,
     }

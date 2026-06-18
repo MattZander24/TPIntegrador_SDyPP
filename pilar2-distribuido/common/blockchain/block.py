@@ -24,6 +24,8 @@ _HASHED_FIELDS = (
     "winning_node_or_pool",
     "voting_window_id",
     "timestamp",
+    "text_compressed",
+    "text_original_len",
 )
 
 # Hash del "bloque génesis virtual": previous_hash del primer bloque real.
@@ -40,6 +42,8 @@ class Block:
     winning_node_or_pool: str
     voting_window_id: str
     timestamp: str
+    text_compressed: str = ""
+    text_original_len: int = 0
     block_hash: str = ""
 
     def compute_block_hash(self) -> str:
@@ -65,13 +69,17 @@ class Block:
             winning_node_or_pool=str(data["winning_node_or_pool"]),
             voting_window_id=str(data["voting_window_id"]),
             timestamp=str(data["timestamp"]),
+            text_compressed=str(data.get("text_compressed", "")),
+            text_original_len=int(data.get("text_original_len", 0)),
             block_hash=str(data.get("block_hash", "")),
         )
 
 
 def seal_block(*, previous_hash: str, law_id: str, action: str,
                n_zeros_required: int, nonce: int, winning_node_or_pool: str,
-               voting_window_id: str, timestamp: str) -> Block:
+               voting_window_id: str, timestamp: str,
+               text_compressed: str = "",
+               text_original_len: int = 0) -> Block:
     """Crea un bloque y le calcula su ``block_hash`` definitivo."""
     block = Block(
         previous_hash=previous_hash,
@@ -82,6 +90,8 @@ def seal_block(*, previous_hash: str, law_id: str, action: str,
         winning_node_or_pool=winning_node_or_pool,
         voting_window_id=voting_window_id,
         timestamp=timestamp,
+        text_compressed=text_compressed,
+        text_original_len=text_original_len,
     )
     block.block_hash = block.compute_block_hash()
     return block

@@ -16,6 +16,7 @@ from .challenge import (
 )
 from .block import Block, seal_block
 from .chain import validate_chain, validate_chain_links, ChainValidationError
+from .compression import compress_text, decompress_text
 
 __all__ = [
     "ACTION_PROMULGACION",
@@ -30,4 +31,6 @@ __all__ = [
     "validate_chain",
     "validate_chain_links",
     "ChainValidationError",
+    "compress_text",
+    "decompress_text",
 ]
