@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir -r /app/nct-coordinator/requirements.txt
 
 COPY pilar2-distribuido/common /app/common
 COPY pilar2-distribuido/nct-coordinator /app/nct-coordinator
+COPY pilar2-distribuido/scripts /app/scripts
 
 RUN mkdir -p /var/log/voxchain
 

@@ -28,24 +28,24 @@ nonce válido ⇔ md5(partial_hash_base + str(nonce)) empieza con n ceros
         ▼                                 │  cooldown:* window_counter   │
  ┌───────────────┐   propuestas (cola)    └───────────────▲──────────────┘
  │   RabbitMQ    │◄───────────────────────────────┐       │ persiste estado
- │               │                                 │       │ y sella bloques
- │ exchange      │   desafio_activo (topic)        │       │
- │ + colas       │────────────┐         ┌──────────┴───────────────┐
- └───────┬───────┘            │         │           NCT            │
-         │                    │         │  - cola round-robin autor│
-         │ respuesta_nonce    │         │  - abre/cierra ventana   │
-         │ (cola) red→NCT     │         │  - dificultad fija n/n+1 │
-         │                    │         │  - verifica nonce, sella │
-         │                    │         │  - Bully-por-esfuerzo*   │
-         │                    ▼         └──────────────────────────┘
+ │               │                                │       │ y sella bloques
+ │ exchange      │   desafio_activo (topic)       │       │
+ │ + colas       │────────────┐        ┌──────────┴───────────────┐
+ └───────┬───────┘            │        │           NCT            │
+         │                    │        │  - cola round-robin autor│
+         │ respuesta_nonce    │        │  - abre/cierra ventana   │
+         │ (cola) red→NCT     │        │  - dificultad fija n/n+1 │
+         │                    │        │  - verifica nonce, sella │
+         │                    │        │  - Bully-por-esfuerzo*   │
+         │                    ▼        └──────────────────────────┘
          │          ┌──────────────────┐
          │          │ Transaction Pool │  suscrito a desafio_activo
          │          │  - fragmenta el  │
          │          │    espacio nonce │
          │          └───────┬──────────┘
-         │      tareas_trp   │   ▲ keepalive_trp
-         │    (cola, interno)│   │ (cola, interno)
-         │                   ▼   │
+         │     tareas_trp   │   ▲ keepalive_trp
+         │   (cola, interno)│   │ (cola, interno)
+         │                  ▼   │
          │            ┌──────────────────┐   invoca minero Pilar 1
          └───────────►│  Worker  x2      │──► GPU 05_brute_force_range
             nonce     │  - mina rango    │    └ fallback CPU brute_force.py
@@ -96,7 +96,7 @@ docker compose up --build          # RabbitMQ + Redis + NCT + TrP + 2 workers
 
 # en otra terminal: proponer una ley (flujo 1)
 docker compose run --rm coordinator \
-  python /app/pilar2-distribuido/scripts/propose_law.py \
+  python /app/scripts/propose_law.py \
   --text "Presupuesto participativo 2026" --author pk-ciudadano-1
 ```
 
