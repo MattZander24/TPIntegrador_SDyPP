@@ -166,10 +166,6 @@ Responde directamente al requisito de seguridad del TP ("Zero static keys", cred
 - Credenciales de conexión a Redis y RabbitMQ por ambiente.
 - **No** custodia las claves privadas de los individuos — esas nunca salen del nodo del individuo (ver 3.1). Vault es para secretos de infraestructura, no para identidad de los participantes.
 
-### 6.2 MinIO — almacenamiento de objetos (opcional, justificar si se incluye)
-
-No es un requisito del TP. Si se incluye, su justificación en VoxChain sería almacenar el **texto completo de las leyes** (el contenido real, no solo su hash). La transacción en la blockchain solo lleva el hash; el texto íntegro vive en MinIO y cualquiera puede verificarlo recalculando el hash. Si el tiempo de desarrollo es limitado, priorizar Vault sobre MinIO — Vault responde a un requisito explícito del TP, MinIO no.
-
 ---
 
 ## 7. Esquema de datos
@@ -292,13 +288,12 @@ No es un requisito del TP. Si se incluye, su justificación en VoxChain sería a
 
 ---
 
-## 9. Limitaciones conocidas (documentar explícitamente en el informe)
+## 9. Limitaciones conocidas
 
 - **Sybil:** el sistema no verifica identidad real. Un individuo puede generar múltiples claves y proponer/votar como si fuera varios. Mitigación futura (DNI) fuera de alcance.
 - **Pérdida de estado en falla del NCT:** la ventana en curso se pierde íntegramente al caer el NCT; el cómputo invertido por la red hasta ese momento no se aprovecha.
 - **Split-brain del NCT:** si una partición de red separa al NCT primario de los standbys sin que el primario falle realmente, ambos pueden operar como líderes simultáneamente. El primario verifica en cada tick que su liderazgo en Redis sigue vigente (`renew_leadership`), y si descubre que otro NCT adquirió el liderazgo, ejecuta `step_down()`. Esta detección no es instantánea; hay una ventana de solapamiento.
 - **Concentración de poder:** el diseño favorece estructuralmente a pools grandes sobre mineros individuales, igual que las blockchains reales de PoW. No se mitiga — se documenta como observación de diseño y se discute cualitativamente en el informe, sin pretender un estudio estadístico riguroso de la distribución de poder computacional en la población (fuera de alcance del TP).
-- **MinIO (si se implementa):** no hay garantía de que el texto en MinIO no se borre o modifique fuera de la blockchain; solo la verificación de hash por parte de terceros detecta la alteración a posteriori, no la previene.
 
 ---
 
