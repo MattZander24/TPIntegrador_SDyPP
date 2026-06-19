@@ -8,6 +8,7 @@ Esquema de claves (namespaced):
 - ``cooldown:<pubkey>``   hash con el cooldown del autor (7.4)
 - ``chain``               lista ordenada de ``block_hash`` (la cadena)
 - ``active_window``       clave única con el ``voting_window_id`` vigente
+- ``window_sealed:<id>``  guard atómico de cierre (primer nonce válido gana, BUG 2)
 - ``window_counter``      contador monótono de ventanas abiertas (base del cooldown)
 - ``law_queue``           lista de ``law_id`` en estado ``pending_queue``
 - ``discarded_text_hashes`` set de ``text_hash`` descartados (detección de reproposición)
@@ -160,6 +161,25 @@ class VoxChainStore:
             "winning_node_or_pool": winning_node_or_pool,
         }))
 
+    # ---- cierre atómico de ventana (BUG 2 / AGENT.md 5 / P2) --------------
+    def try_seal_window(self, voting_window_id: str, winning_node_or_pool: str,
+                        *, ttl: int = 3600) -> bool:
+        """Reclama el cierre de una ventana de forma atómica (SETNX).
+
+        El **primer** nonce válido recibido para ``voting_window_id`` gana el
+        cierre; las soluciones tardías ven la clave ``window_sealed:<id>`` ya
+        puesta y obtienen ``False`` (se descartan, AGENT.md 5). El guard vive en
+        Redis para ser autoritativo ante un failover (un NCT distinto retomando),
+        no sólo en el estado en memoria del proceso. La clave expira tras ``ttl``
+        para no acumular entradas indefinidamente.
+        """
+        acquired = self.r.set(f"window_sealed:{voting_window_id}",
+                              winning_node_or_pool, nx=True, ex=ttl)
+        return bool(acquired)
+
+    def get_window_sealer(self, voting_window_id: str) -> Optional[str]:
+        return self.r.get(f"window_sealed:{voting_window_id}")
+
     # ---- ventana activa (estado único) ------------------------------------
     def set_active_window(self, voting_window_id: str) -> None:
         self.r.set("active_window", voting_window_id)
@@ -215,16 +235,68 @@ class VoxChainStore:
         return self.r.llen("chain")
 
     # ---- liderazgo del NCT (Bully distribuido, AGENT.md 4) ----------------
-    def try_acquire_leadership(self, candidate_id: str, ttl: int = 30) -> bool:
-        """Intenta adquirir el liderazgo del NCT vía SETNX.
+    #
+    # Dos modos de adquisición del lease:
+    #
+    # 1. try_acquire_leadership (NX): para el arranque inicial. Solo adquiere si
+    #    la clave no existe, evitando que dos nodos que arrancan a la vez compitan.
+    #
+    # 2. elect_acquire_leadership (SET sin NX): para el ganador de la elección PoW.
+    #    El líder anterior está muerto; su clave puede seguir viva dentro del TTL.
+    #    El PoW ya arbitró al ganador, así que sobreescribimos sin NX.
+    #    La atomicidad entre candidatos múltiples la garantiza el backoff del PoW
+    #    (el segundo candidato ve el claim del primero en nct_election y se retira
+    #    antes de llegar acá).
+    #
+    # TTL coherente con el timeout de heartbeat: el leader renueva cada
+    # heartbeat_interval (≈3 s); el TTL debe ser mayor que el intervalo pero
+    # aproximado al timeout de detección (≈12 s) para que el lease expire si el
+    # líder deja de renovar, sin interferir con la adquisición via PoW.
+    # Valor por defecto: 20 s (≈ 1.6× el timeout de 12 s, >> el intervalo de 3 s).
 
-        Devuelve True si este candidato ganó la elección. El lock expira
-        después de ``ttl`` segundos (el líder debe renovarlo con heartbeats).
+    def try_acquire_leadership(self, candidate_id: str, ttl: int = 20) -> bool:
+        """Intenta adquirir el liderazgo del NCT vía SETNX (arranque inicial).
+
+        Devuelve True si este candidato ganó la adquisición. El lock expira
+        después de ``ttl`` segundos; el líder debe renovarlo con heartbeats.
         """
         acquired = self.r.set("nct:leader", candidate_id, nx=True, ex=ttl)
         return bool(acquired)
 
-    def renew_leadership(self, candidate_id: str, ttl: int = 30) -> bool:
+    def elect_acquire_leadership(self, candidate_id: str, ttl: int = 20,
+                                 dead_threshold: int = 6) -> bool:
+        """Adquiere el lease tras ganar la elección PoW.
+
+        Aplica tres reglas en orden:
+        1. Clave inexistente (lease expiró naturalmente) → adquirir.
+        2. Clave == nosotros → renovar TTL (restart tras crash).
+        3. Clave == otro candidato:
+           - TTL ≤ dead_threshold → el holder está muerto (dejó de renovar) → adquirir.
+           - TTL > dead_threshold → otro candidato ganó la elección concurrente → fallar.
+
+        El ``dead_threshold`` debe ser > (LEADER_LEASE_TTL - HEARTBEAT_TIMEOUT) para
+        cubrir el TTL restante del líder caído cuando la elección dispara, y <<
+        LEADER_LEASE_TTL para no confundirlo con un ganador concurrente recién
+        adquirido. Valor seguro: 2 × HEARTBEAT_INTERVAL ≈ 6 s.
+
+        Nota: la implementación es GET + SET, no atómica. La atomicidad real la
+        proveen el backoff del PoW (solo un candidato llega acá en condiciones
+        normales) y el corto margen temporal entre ambas operaciones.
+        """
+        current = self.r.get("nct:leader")
+        if current is None:
+            self.r.set("nct:leader", candidate_id, ex=ttl)
+            return True
+        if current == candidate_id:
+            self.r.expire("nct:leader", ttl)
+            return True
+        remaining = self.r.ttl("nct:leader")
+        if remaining >= 0 and remaining <= dead_threshold:
+            self.r.set("nct:leader", candidate_id, ex=ttl)
+            return True
+        return False
+
+    def renew_leadership(self, candidate_id: str, ttl: int = 20) -> bool:
         """Renueva el liderazgo: sólo el líder actual puede extender su TTL."""
         # Usamos una transacción Lua para verificar que seguimos siendo el líder.
         lua = """

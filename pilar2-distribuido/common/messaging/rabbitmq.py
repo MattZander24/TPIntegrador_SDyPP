@@ -41,6 +41,9 @@ class RabbitMQMessaging(Messaging):
         self._conn = None
         self._ch = None
         self._handlers: dict[str, Callable[[dict], None]] = {}
+        # consumer tag por stream activo (None mientras no se consume el stream).
+        self._consumer_tags: dict[str, str] = {}
+        self._consuming = False
 
     # -- conexión / topología ----------------------------------------------
     def connect(self) -> None:
@@ -100,27 +103,62 @@ class RabbitMQMessaging(Messaging):
         self._publish("", QUEUE_ELECTION, claim)
 
     # -- suscripción --------------------------------------------------------
-    def on_proposal(self, handler): self._handlers[QUEUE_PROPUESTAS] = handler
-    def on_nonce_response(self, handler): self._handlers[QUEUE_RESPUESTA_NONCE] = handler
-    def on_task(self, handler): self._handlers[QUEUE_TAREAS] = handler
-    def on_keepalive(self, handler): self._handlers[QUEUE_KEEPALIVE] = handler
-    def on_challenge(self, handler): self._handlers[EXCHANGE_DESAFIO] = handler
-    def on_heartbeat(self, handler): self._handlers[EXCHANGE_HEARTBEAT] = handler
-    def on_election_claim(self, handler): self._handlers[QUEUE_ELECTION] = handler
+    # Registrar un handler también arranca el consumidor si ya estamos en el
+    # loop de consumo. Esto permite el gating por liderazgo (AGENT.md 4): un
+    # follower que gana la elección abre en caliente sus colas de trabajo.
+    def on_proposal(self, handler): self._subscribe(QUEUE_PROPUESTAS, handler)
+    def on_nonce_response(self, handler): self._subscribe(QUEUE_RESPUESTA_NONCE, handler)
+    def on_task(self, handler): self._subscribe(QUEUE_TAREAS, handler)
+    def on_keepalive(self, handler): self._subscribe(QUEUE_KEEPALIVE, handler)
+    def on_challenge(self, handler): self._subscribe(EXCHANGE_DESAFIO, handler)
+    def on_heartbeat(self, handler): self._subscribe(EXCHANGE_HEARTBEAT, handler)
+    def on_election_claim(self, handler): self._subscribe(QUEUE_ELECTION, handler)
+
+    def _subscribe(self, stream: str, handler: Callable[[dict], None]) -> None:
+        self._handlers[stream] = handler
+        if self._consuming:
+            self._start_consumer(stream)
+
+    def unsubscribe(self, stream: str) -> None:
+        """Cancela el consumidor sobre ``stream`` (gating por liderazgo).
+
+        Un líder que cae (o detecta split-brain) deja de consumir las colas de
+        trabajo cancelando su consumidor: no basta con ignorar mensajes en
+        memoria porque RabbitMQ ya se los entregó (round-robin)."""
+        self._handlers.pop(stream, None)
+        tag = self._consumer_tags.pop(stream, None)
+        if tag is not None and self._ch is not None:
+            try:
+                self._ch.basic_cancel(tag)
+            except Exception:  # pragma: no cover
+                log.exception("error cancelando consumidor de %s", stream)
+
+    def consumed_queues(self) -> set[str]:
+        """Streams con consumidor activo (lo que realmente se está consumiendo)."""
+        return set(self._consumer_tags)
+
+    def _start_consumer(self, stream: str) -> None:
+        if stream in self._consumer_tags:
+            return  # ya consumiendo este stream
+        handler = self._handlers.get(stream)
+        if handler is None:
+            return
+        if stream in (EXCHANGE_DESAFIO, EXCHANGE_HEARTBEAT):
+            result = self._ch.queue_declare(queue="", exclusive=True)
+            qname = result.method.queue
+            binding_key = (DESAFIO_BINDING_KEY if stream == EXCHANGE_DESAFIO
+                           else HEARTBEAT_BINDING_KEY)
+            self._ch.queue_bind(exchange=stream, queue=qname,
+                                routing_key=binding_key)
+        else:
+            qname = stream
+        tag = self._ch.basic_consume(queue=qname,
+                                     on_message_callback=self._wrap(handler))
+        self._consumer_tags[stream] = tag
 
     def _bind_consumers(self) -> None:
-        for stream, handler in self._handlers.items():
-            if stream in (EXCHANGE_DESAFIO, EXCHANGE_HEARTBEAT):
-                result = self._ch.queue_declare(queue="", exclusive=True)
-                qname = result.method.queue
-                binding_key = (DESAFIO_BINDING_KEY if stream == EXCHANGE_DESAFIO
-                               else HEARTBEAT_BINDING_KEY)
-                self._ch.queue_bind(exchange=stream, queue=qname,
-                                    routing_key=binding_key)
-            else:
-                qname = stream
-            self._ch.basic_consume(queue=qname,
-                                   on_message_callback=self._wrap(handler))
+        for stream in list(self._handlers):
+            self._start_consumer(stream)
 
     def _wrap(self, handler: Callable[[dict], None]):
         def _cb(ch, method, properties, body):
@@ -137,8 +175,9 @@ class RabbitMQMessaging(Messaging):
     def start_consuming(self, tick=None, tick_interval: float = 1.0) -> None:
         if self._ch is None:
             self.connect()
+        self._consuming = True
         self._bind_consumers()
-        log.info("consumiendo (%s)", ", ".join(self._handlers) or "sin handlers")
+        log.info("consumiendo (%s)", ", ".join(self._consumer_tags) or "sin handlers")
         while True:
             self._conn.process_data_events(time_limit=tick_interval)
             if tick is not None:

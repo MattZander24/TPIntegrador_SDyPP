@@ -137,6 +137,28 @@ pytest -m integration  # sólo el flujo extremo a extremo
   en memoria + `fakeredis`. El mismo código de dominio corre en ambos.
 - **Una sola ventana activa** (AGENT.md 3.3): estado único `active_window` en
   Redis; el NCT no abre una nueva hasta cerrar la anterior.
+- **Cierre atómico al primer nonce válido** (AGENT.md 5 / P2): el primer nonce
+  válido **recibido** para una ventana cierra el sello mediante un guard atómico
+  en Redis (`SET window_sealed:<voting_window_id> <winner> NX`). Toda solución
+  válida posterior para la misma ventana ve el guard puesto y se descarta como
+  tardía (no sobrescribe `winning_nonce`/`winning_node_or_pool`). El guard vive en
+  Redis —no sólo en memoria del proceso— para ser autoritativo ante un failover
+  (un NCT distinto retomando). El desempate es por orden de llegada, no por el
+  valor del nonce.
+- **Suscripción a colas de trabajo gateada por liderazgo** (AGENT.md 4): sólo el
+  NCT líder consume `propuestas` y `respuesta_nonce`. Un standby es follower:
+  escucha `nct.heartbeat` y `nct_election`, pero **no** se suscribe a las colas de
+  trabajo, porque RabbitMQ las reparte round-robin entre consumidores y un
+  follower suscrito se quedaría con (y descartaría) la mitad de los mensajes. La
+  promoción follower→líder (al ganar la elección) abre esos consumidores; la
+  pérdida de liderazgo (`step_down`) los cierra.
+- **Texto comprimido inline en la propuesta**: la propuesta viaja con
+  `text_compressed` (gzip+base64) y `text_original_len` además de `text_hash`. El
+  esquema 7.1 de AGENT prevé MinIO (`text_ref`) para el texto completo; acá el
+  texto comprimido viaja **inline** en el mensaje para evitar la dependencia de
+  MinIO en el camino crítico (propuesta→ventana→sellado). `text_hash` sigue siendo
+  la **identidad canónica** de la ley (reproposición y encadenamiento se deciden
+  por hash, no por el blob); MinIO queda como opción para textos grandes.
 - **Orden round-robin por autor**, no FIFO (3.3): un autor no encadena turnos
   consecutivos si hay leyes de otros.
 - **Dificultad fija n / n+1** (3.6, 10): `n` es configuración; **prohibido** el

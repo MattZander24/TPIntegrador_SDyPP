@@ -24,6 +24,11 @@ HEARTBEAT_ROUTING_KEY = "nct.heartbeat.live"
 HEARTBEAT_BINDING_KEY = "nct.heartbeat.#"
 QUEUE_ELECTION = "nct_election"            # backups → backups (cola)
 
+# Topics (exchanges) → fan-out: cada consumidor recibe una copia.
+# El resto son colas de trabajo → consumidores competidores (round-robin),
+# igual que RabbitMQ reparte una cola entre sus consumidores.
+BROADCAST_STREAMS = frozenset({EXCHANGE_DESAFIO, EXCHANGE_HEARTBEAT})
+
 Handler = Callable[[dict], None]
 
 
@@ -48,6 +53,14 @@ class Messaging:
     def on_heartbeat(self, handler: Handler) -> None: raise NotImplementedError
     def on_election_claim(self, handler: Handler) -> None: raise NotImplementedError
 
+    # -- cancelación de consumo (gating por liderazgo, AGENT.md 4) --
+    # Un NCT follower NO debe consumir las colas de trabajo (propuestas,
+    # respuesta_nonce); deja de hacerlo cancelando su consumidor sobre ese stream.
+    def unsubscribe(self, stream: str) -> None: raise NotImplementedError
+
+    # Conjunto de streams que este nodo consume actualmente.
+    def consumed_queues(self) -> set[str]: raise NotImplementedError
+
     # -- ciclo de vida --
     # tick: callback periódico para trabajo no disparado por mensajes
     # (apertura de ventana, chequeo de deadline, emisión de keep-alives).
@@ -61,20 +74,46 @@ class Messaging:
 class InMemoryBus(Messaging):
     """Bus en proceso: ``publish_*`` despacha sincrónicamente a los handlers.
 
-    Útil para el test e2e sin broker. La semántica de "el primero gana" del NCT
-    no se modela acá (eso lo decide el propio NCT al verificar y descartar
-    soluciones tardías); el bus sólo entrega los mensajes.
+    Modela la topología de RabbitMQ para que el dominio corra idéntico en tests:
+
+    - **Topics** (``desafio_activo``, ``nct.heartbeat``): fan-out, cada
+      suscriptor recibe una copia.
+    - **Colas de trabajo** (``propuestas``, ``respuesta_nonce``, ``tareas_trp``,
+      ``keepalive_trp``, ``nct_election``): consumidores competidores; cada
+      mensaje va a **un solo** consumidor en round-robin, igual que RabbitMQ
+      reparte una cola. Por eso dos NCT suscritos a ``propuestas`` se reparten
+      los mensajes (clave para el test del BUG 1: el follower no debe suscribirse).
+
+    La semántica de "el primero gana" del NCT no se modela acá (eso lo decide el
+    propio NCT con el cierre atómico en Redis); el bus sólo entrega los mensajes.
     """
 
     def __init__(self):
         self._handlers: dict[str, list[Handler]] = {}
+        self._rr: dict[str, int] = {}  # cursor round-robin por cola de trabajo
 
     def _register(self, stream: str, handler: Handler) -> None:
         self._handlers.setdefault(stream, []).append(handler)
 
     def _dispatch(self, stream: str, payload: dict) -> None:
-        for handler in list(self._handlers.get(stream, [])):
-            handler(payload)
+        handlers = self._handlers.get(stream)
+        if not handlers:
+            return
+        if stream in BROADCAST_STREAMS:
+            for handler in list(handlers):
+                handler(payload)
+            return
+        # Cola de trabajo: round-robin entre consumidores competidores.
+        idx = self._rr.get(stream, 0) % len(handlers)
+        self._rr[stream] = idx + 1
+        handlers[idx](payload)
+
+    def unsubscribe(self, stream: str) -> None:
+        self._handlers.pop(stream, None)
+        self._rr.pop(stream, None)
+
+    def consumed_queues(self) -> set[str]:
+        return {s for s, hs in self._handlers.items() if hs}
 
     # publicación
     def publish_proposal(self, law): self._dispatch(QUEUE_PROPUESTAS, law)

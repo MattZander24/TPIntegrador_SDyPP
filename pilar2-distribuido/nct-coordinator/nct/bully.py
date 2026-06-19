@@ -55,6 +55,8 @@ def run_distributed_election(
     store,
     *,
     clock=time.time,
+    lease_ttl: int = 20,
+    dead_threshold: int = 6,
 ) -> bool:
     """Participa en la elección distribuida del NCT.
 
@@ -106,9 +108,13 @@ def run_distributed_election(
         log.info("otro candidato se adelantó justo antes de nuestro claim")
         return False
 
-    won = store.try_acquire_leadership(candidate_id)
+    # Tras ganar el PoW, adquirimos el lease vía Lua atómico:
+    # - si el lease del líder caído tiene TTL bajo → sobreescribimos (está muerto).
+    # - si otro candidato ya ganó y tiene TTL alto → fallamos (no split-brain).
+    won = store.elect_acquire_leadership(candidate_id, ttl=lease_ttl,
+                                         dead_threshold=dead_threshold)
     if won:
-        log.info("¡GANAMOS la elección! Somos el nuevo NCT")
+        log.info("¡GANAMOS la elección! Somos el nuevo NCT (%s)", candidate_id)
     else:
         log.info("otro candidato ya adquirió el liderazgo")
     return won
