@@ -47,3 +47,12 @@ NCT_ID = get("NCT_ID", "nct-default")
 ELECTION_N_ZEROS = get_int("ELECTION_N_ZEROS", 3)  # dificultad del mini-PoW
 HEARTBEAT_INTERVAL = get_int("HEARTBEAT_INTERVAL", 3)   # segundos entre heartbeats
 HEARTBEAT_TIMEOUT = get_int("HEARTBEAT_TIMEOUT", 12)    # segundos sin HB → elección
+# TTL del lease nct:leader. Debe ser > HEARTBEAT_INTERVAL (el líder renueva a esa
+# frecuencia) y próximo a HEARTBEAT_TIMEOUT (para que el lease expire si el líder
+# muere y deja de renovar). Default: HEARTBEAT_TIMEOUT + HEARTBEAT_INTERVAL = 15 s.
+LEADER_LEASE_TTL = get_int("LEADER_LEASE_TTL", HEARTBEAT_TIMEOUT + HEARTBEAT_INTERVAL)
+# Umbral de TTL para considerar al holder del lease como muerto al adquirir
+# el liderazgo por elección. Debe ser > (LEADER_LEASE_TTL - HEARTBEAT_TIMEOUT)
+# y << LEADER_LEASE_TTL para no confundir a un ganador concurrente con un muerto.
+# Default: 2 × HEARTBEAT_INTERVAL = 6 s.
+LEADER_DEAD_THRESHOLD = get_int("LEADER_DEAD_THRESHOLD", 2 * HEARTBEAT_INTERVAL)

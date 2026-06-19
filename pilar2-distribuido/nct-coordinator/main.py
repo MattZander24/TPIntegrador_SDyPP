@@ -1,11 +1,16 @@
 """Punto de entrada del NCT: cablea Redis + RabbitMQ, health endpoint y loop.
 
-Dos modos de operación:
+Dos identidades cosméticas (``NCT_MODE``):
 
-- ``NCT_MODE=primary`` (default): publica heartbeats, procesa colas de propuestas
-  y respuestas. Es el NCT activo.
-- ``NCT_MODE=standby``: monitorea heartbeats del líder. Si el líder falla,
-  dispara una elección distribuida y asume como líder si gana.
+- ``NCT_MODE=primary`` (default): intenta adquirir el lease al arrancar; si lo
+  obtiene, es el líder inicial y publica heartbeats.
+- ``NCT_MODE=standby``: arranca como follower y monitorea heartbeats.
+
+**Todo nodo que no tenga el lease corre el monitor de heartbeats y participa
+en la elección**, independientemente del modo inicial. El comportamiento se
+decide por quién tiene el lease, no por el nombre del servicio. Si el primario
+pierde el lease (step_down), su monitor se activa y puede promover al ganar la
+siguiente elección.
 
 Ejecutar: ``python main.py`` (dentro del contenedor). Toda la configuración
 proviene de variables de entorno (ver common/config.py).
@@ -33,8 +38,23 @@ def main() -> None:
     messaging.connect()
 
     is_primary = (mode == "primary")
-    # El intervalo de heartbeat es el mismo para ambos modos; lo que decide si se
-    # publican es `is_leader` (un standby promovido a líder empieza a emitirlos).
+
+    # Si arrancamos como primario, intentamos adquirir el lease. Si ya fue
+    # tomado por otro nodo (p. ej. un standby que se promovió mientras este
+    # contenedor reiniciaba), arrancamos como follower.
+    if is_primary:
+        acquired = store.try_acquire_leadership(config.NCT_ID,
+                                                ttl=config.LEADER_LEASE_TTL)
+        is_leader_now = acquired
+        if not acquired:
+            log.warning("primary %s no pudo adquirir el lease al arrancar "
+                        "(otro nodo ya es líder); arrancando como follower",
+                        config.NCT_ID)
+    else:
+        is_leader_now = False
+
+    # El intervalo de heartbeat es el mismo para ambos modos; lo que decide si
+    # se publican es `is_leader` (un follower promovido empieza a emitirlos).
     nct = NCTCoordinator(
         messaging, store,
         n_zeros=config.N_ZEROS,
@@ -43,45 +63,57 @@ def main() -> None:
         cooldown_new=config.COOLDOWN_WINDOWS_NEW,
         cooldown_reproposed=config.COOLDOWN_WINDOWS_REPROPOSED,
         nct_id=config.NCT_ID,
-        is_leader=is_primary,
+        is_leader=is_leader_now,
         heartbeat_interval=config.HEARTBEAT_INTERVAL,
+        # on_stepdown se conecta después de crear el monitor (ver abajo).
     )
+
+    # El monitor vive en TODOS los nodos, no solo en el standby. Un nodo que
+    # arranca como líder usa initial_is_leader=True para no disparar elección
+    # de inmediato; cuando pierde el lease (step_down), su monitor se activa
+    # via notify_stepdown y empieza a observar heartbeats del nuevo líder.
+    monitor = NCTHeartbeatMonitor(
+        messaging, store,
+        candidate_id=config.NCT_ID,
+        election_n_zeros=config.ELECTION_N_ZEROS,
+        heartbeat_timeout=config.HEARTBEAT_TIMEOUT,
+        on_elected=nct.become_leader,
+        initial_is_leader=is_leader_now,
+        lease_ttl=config.LEADER_LEASE_TTL,
+        dead_threshold=config.LEADER_DEAD_THRESHOLD,
+    )
+    monitor.wire()
+
+    # Conectar step_down → monitor.notify_stepdown: cuando el coordinator ceda
+    # el liderazgo, el monitor empieza a observar heartbeats del nuevo líder.
+    nct._on_stepdown = monitor.notify_stepdown
     nct.wire()
 
-    if not is_primary:
-        monitor = NCTHeartbeatMonitor(
-            messaging, store,
-            candidate_id=config.NCT_ID,
-            election_n_zeros=config.ELECTION_N_ZEROS,
-            heartbeat_timeout=config.HEARTBEAT_TIMEOUT,
-            on_elected=nct.become_leader,  # ganar la elección abre las colas de trabajo
-        )
-        monitor.wire()
-        log.info("standby: monitoreando heartbeats (timeout=%ds, elección=%d ceros)",
-                 config.HEARTBEAT_TIMEOUT, config.ELECTION_N_ZEROS)
+    if is_leader_now:
+        log.info("arrancando como LÍDER (%s); monitor en standby hasta step_down",
+                 config.NCT_ID)
     else:
-        store.try_acquire_leadership(config.NCT_ID)
-        monitor = None
+        log.info("arrancando como FOLLOWER (%s); monitoreando heartbeats "
+                 "(timeout=%ds, elección=%d ceros)",
+                 config.NCT_ID, config.HEARTBEAT_TIMEOUT, config.ELECTION_N_ZEROS)
 
     def health() -> dict:
-        h = {
+        return {
             "nct": "ok",
             "redis": "ok" if store.ping() else "down",
             "rabbitmq": "ok" if messaging.is_healthy() else "down",
             "mode": mode,
+            "is_leader": str(nct.is_leader),
+            "leader_alive": str(monitor.leader_alive),
+            "leader": store.get_leader() or "none",
         }
-        if not is_primary and monitor is not None:
-            h["leader_alive"] = str(monitor.leader_alive)
-            h["leader"] = store.get_leader() or "none"
-        return h
 
     start_health_server(config.HEALTH_PORT, health)
     log.info("health en :%d/health", config.HEALTH_PORT)
 
     def composite_tick() -> None:
         nct.tick()
-        if monitor is not None:
-            monitor.tick()
+        monitor.tick()
 
     try:
         messaging.start_consuming(tick=composite_tick, tick_interval=1.0)

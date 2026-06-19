@@ -42,7 +42,7 @@ class NCTCoordinator:
                  window_seconds_promulgacion: int, window_seconds_derogacion: int,
                  cooldown_new: int, cooldown_reproposed: int, clock=time.time,
                  nct_id: str = "nct", is_leader: bool = True,
-                 heartbeat_interval: float = 0.0):
+                 heartbeat_interval: float = 0.0, on_stepdown=None):
         self.m = messaging
         self.store = store
         self.n_zeros = n_zeros
@@ -56,6 +56,9 @@ class NCTCoordinator:
         self.nct_id = nct_id
         self.is_leader = is_leader
         self.heartbeat_interval = heartbeat_interval
+        # Callback invocado al ceder el liderazgo: lo usa el monitor para
+        # activarse y empezar a observar heartbeats del nuevo líder.
+        self._on_stepdown = on_stepdown
 
         # Estado en memoria de la ventana activa (no se persiste para recuperación:
         # ante caída del NCT la ventana se pierde, AGENT.md 4).
@@ -317,7 +320,9 @@ class NCTCoordinator:
         Se invoca al detectar pérdida de liderazgo en Redis (split-brain,
         AGENT.md 11.4): no basta con ignorar mensajes en memoria, hay que dejar
         de consumir ``propuestas``/``respuesta_nonce`` para no robarlos del
-        reparto round-robin. La ventana en curso se pierde por diseño (AGENT.md 4)."""
+        reparto round-robin. La ventana en curso se pierde por diseño (AGENT.md 4).
+        Tras ceder el liderazgo, notifica al monitor (``_on_stepdown``) para que
+        empiece a observar heartbeats del nuevo líder."""
         if not self.is_leader:
             return
         log.warning("step_down (%s): liderazgo perdido, cerrando colas de trabajo",
@@ -325,6 +330,8 @@ class NCTCoordinator:
         self.is_leader = False
         self._unsubscribe_work_queues()
         self._active = None
+        if self._on_stepdown is not None:
+            self._on_stepdown()
 
     # -- tick periódico para el loop de consumo ----------------------------
     def tick(self) -> None:

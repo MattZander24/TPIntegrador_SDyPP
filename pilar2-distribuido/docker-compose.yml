@@ -52,6 +52,10 @@ services:
       WINDOW_SECONDS_DEROGACION: "180"
       NCT_MODE: "primary"
       NCT_ID: "nct-primary"
+      ELECTION_N_ZEROS: "2"
+      HEARTBEAT_INTERVAL: "3"
+      HEARTBEAT_TIMEOUT: "12"
+      LEADER_LEASE_TTL: "15"   # > intervalo (3s), ≈ timeout (12s); ver config.py
     ports:
       - "8081:8080"   # health endpoint del NCT
 
@@ -69,6 +73,9 @@ services:
       NCT_MODE: "standby"
       NCT_ID: "nct-standby-1"
       ELECTION_N_ZEROS: "2"
+      HEARTBEAT_INTERVAL: "3"
+      HEARTBEAT_TIMEOUT: "12"
+      LEADER_LEASE_TTL: "15"
     # Sin puerto de host: sólo red interna
 
   transaction-pool:
