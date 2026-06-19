@@ -100,5 +100,31 @@ services:
     # Sin publicar puerto de host: hay 2 réplicas; el health es accesible en la
     # red interna (puerto 8080 del contenedor).
 
+  voxchain-api:
+    build:
+      context: ..
+      dockerfile: pilar2-distribuido/voxchain-api/Dockerfile
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *app-env
+      NCT_HEALTH_URL: http://coordinator:8080/health
+      TRP_HEALTH_URL: http://transaction-pool:8080/health
+      PORT: "8000"
+    ports:
+      - "8000:8000"
+
+  voxchain-frontend:
+    build:
+      context: voxchain-frontend
+      dockerfile: Dockerfile
+    ports:
+      - "4200:80"
+    depends_on:
+      - voxchain-api
+
 volumes:
   redis-data:
