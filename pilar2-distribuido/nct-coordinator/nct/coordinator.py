@@ -235,6 +235,16 @@ class NCTCoordinator:
                         active["n_zeros_required"], nonce)
             return
 
+        # Cierre atómico (BUG 2 / AGENT.md 5): el PRIMER nonce válido recibido
+        # cierra la ventana. El guard vive en Redis (SETNX) para ser autoritativo
+        # ante failover; toda solución válida posterior para la misma ventana ve
+        # la clave ya puesta y se descarta como tardía (no sobrescribe nada).
+        wid = active["voting_window_id"]
+        if not self.store.try_seal_window(wid, winner or "desconocido"):
+            log.info("nonce tardío descartado: ventana %s ya sellada por %s",
+                     wid, self.store.get_window_sealer(wid))
+            return
+
         self._seal(active, int(nonce), winner)
 
     def _seal(self, active: dict, nonce: int, winner: str) -> None:

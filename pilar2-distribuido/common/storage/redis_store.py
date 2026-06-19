@@ -8,6 +8,7 @@ Esquema de claves (namespaced):
 - ``cooldown:<pubkey>``   hash con el cooldown del autor (7.4)
 - ``chain``               lista ordenada de ``block_hash`` (la cadena)
 - ``active_window``       clave única con el ``voting_window_id`` vigente
+- ``window_sealed:<id>``  guard atómico de cierre (primer nonce válido gana, BUG 2)
 - ``window_counter``      contador monótono de ventanas abiertas (base del cooldown)
 - ``law_queue``           lista de ``law_id`` en estado ``pending_queue``
 - ``discarded_text_hashes`` set de ``text_hash`` descartados (detección de reproposición)
@@ -159,6 +160,25 @@ class VoxChainStore:
             "winning_nonce": winning_nonce,
             "winning_node_or_pool": winning_node_or_pool,
         }))
+
+    # ---- cierre atómico de ventana (BUG 2 / AGENT.md 5 / P2) --------------
+    def try_seal_window(self, voting_window_id: str, winning_node_or_pool: str,
+                        *, ttl: int = 3600) -> bool:
+        """Reclama el cierre de una ventana de forma atómica (SETNX).
+
+        El **primer** nonce válido recibido para ``voting_window_id`` gana el
+        cierre; las soluciones tardías ven la clave ``window_sealed:<id>`` ya
+        puesta y obtienen ``False`` (se descartan, AGENT.md 5). El guard vive en
+        Redis para ser autoritativo ante un failover (un NCT distinto retomando),
+        no sólo en el estado en memoria del proceso. La clave expira tras ``ttl``
+        para no acumular entradas indefinidamente.
+        """
+        acquired = self.r.set(f"window_sealed:{voting_window_id}",
+                              winning_node_or_pool, nx=True, ex=ttl)
+        return bool(acquired)
+
+    def get_window_sealer(self, voting_window_id: str) -> Optional[str]:
+        return self.r.get(f"window_sealed:{voting_window_id}")
 
     # ---- ventana activa (estado único) ------------------------------------
     def set_active_window(self, voting_window_id: str) -> None:
