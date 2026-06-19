@@ -4,17 +4,17 @@ FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONPATH=/app:/app/voxchain-api \
+    PYTHONPATH=/app:/app/voxchain_api \
     LOG_DIR=/var/log/voxchain
 
 WORKDIR /app
 
-COPY pilar2-distribuido/voxchain-api/requirements.txt /app/voxchain-api/requirements.txt
-RUN pip install --no-cache-dir -r /app/voxchain-api/requirements.txt
+COPY pilar2-distribuido/voxchain_api/requirements.txt /app/voxchain_api/requirements.txt
+RUN pip install --no-cache-dir -r /app/voxchain_api/requirements.txt
 
 COPY pilar2-distribuido/common /app/common
-COPY pilar2-distribuido/voxchain-api /app/voxchain-api
+COPY pilar2-distribuido/voxchain_api /app/voxchain_api
 
 RUN mkdir -p /var/log/voxchain
 
-CMD ["python", "/app/voxchain-api/main.py"]
+CMD ["python", "/app/voxchain_api/main.py"]

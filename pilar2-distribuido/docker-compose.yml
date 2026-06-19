@@ -103,7 +103,7 @@ services:
   voxchain-api:
     build:
       context: ..
-      dockerfile: pilar2-distribuido/voxchain-api/Dockerfile
+      dockerfile: pilar2-distribuido/voxchain_api/Dockerfile
     depends_on:
       rabbitmq:
         condition: service_healthy
