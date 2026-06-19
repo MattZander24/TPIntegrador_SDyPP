@@ -62,7 +62,7 @@ class NCTCoordinator:
 
         # Estado en memoria de la ventana activa (no se persiste para recuperación:
         # ante caída del NCT la ventana se pierde, AGENT.md 4).
-        self._last_author = None
+        self._last_author = store.get_last_author()
         self._active = None  # dict con datos de la ventana en curso, o None
         self._last_heartbeat_pub = 0.0
 
@@ -197,6 +197,7 @@ class NCTCoordinator:
             "author_pubkey": law.get("author_pubkey"),
         }
         self._last_author = law.get("author_pubkey")
+        self.store.set_last_author(self._last_author)
 
         self.m.publish_challenge({
             "voting_window_id": voting_window_id, "law_id": law_id,
@@ -308,6 +309,7 @@ class NCTCoordinator:
         log.info("asumiendo como líder NCT (%s): abriendo colas de trabajo", self.nct_id)
         self.is_leader = True
         self._subscribe_work_queues()
+        self._last_author = self.store.get_last_author()
         self.store.clear_active_window()
         self._active = None
         # La ventana en curso al momento de la caída se pierde (AGENT.md 4);

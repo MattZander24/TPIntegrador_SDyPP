@@ -45,6 +45,7 @@ class RabbitMQPublisher:
             "text_original_len": text_original_len,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "action": action,
+            "status": "pending_queue",
         }
 
         self.messaging.publish_proposal(law)

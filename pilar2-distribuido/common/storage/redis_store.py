@@ -113,6 +113,20 @@ class VoxChainStore:
     def queued_laws(self) -> list[dict]:
         return [law for lid in self.queued_law_ids() if (law := self.get_law(lid))]
 
+    def all_laws(self) -> list[dict]:
+        laws = []
+        cursor = 0
+        while True:
+            cursor, keys = self.r.scan(cursor, match="law:*")
+            for key in keys:
+                law_id = key.split(":", 1)[1]
+                law = self.get_law(law_id)
+                if law:
+                    laws.append(law)
+            if cursor == 0:
+                break
+        return laws
+
     # ---- detección de reproposición (3.5) ---------------------------------
     def mark_text_hash_discarded(self, text_hash: str) -> None:
         self.r.sadd("discarded_text_hashes", text_hash)
@@ -189,6 +203,13 @@ class VoxChainStore:
 
     def clear_active_window(self) -> None:
         self.r.delete("active_window")
+
+    # ---- último autor (round-robin, AGENT.md 3.3) -------------------------
+    def set_last_author(self, author_pubkey: str) -> None:
+        self.r.set("nct:last_author", author_pubkey)
+
+    def get_last_author(self) -> Optional[str]:
+        return self.r.get("nct:last_author")
 
     # ---- cooldowns (7.4) --------------------------------------------------
     def set_cooldown(self, author_pubkey: str, cooldown_until_window: int,

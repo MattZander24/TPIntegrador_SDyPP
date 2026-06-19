@@ -32,6 +32,18 @@ export class ApiService {
     return this.http.get<Law>(`${this.apiUrl}/laws/${lawId}`);
   }
 
+  getLawText(lawId: string): Observable<string> {
+    return this.http.get(`${this.apiUrl}/laws/${lawId}/text`, { responseType: 'text' });
+  }
+
+  getNextLaw(): Observable<Law | null> {
+    return this.http.get<Law | null>(`${this.apiUrl}/laws/next`);
+  }
+
+  getLawQueue(): Observable<Law[]> {
+    return this.http.get<Law[]>(`${this.apiUrl}/laws/queue`);
+  }
+
   proposeLaw(proposal: LawProposalRequest): Observable<Law> {
     return this.http.post<Law>(`${this.apiUrl}/laws`, proposal);
   }

@@ -1,4 +1,4 @@
-import { Component, inject, OnInit, signal } from '@angular/core';
+import { Component, inject, OnDestroy, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { MatCardModule } from '@angular/material/card';
 import { ApiService } from '../../core/services/api.service';
@@ -84,14 +84,21 @@ import { ApiService } from '../../core/services/api.service';
     }
   `]
 })
-export class HealthComponent implements OnInit {
+export class HealthComponent implements OnInit, OnDestroy {
   private apiService = inject(ApiService);
   health = signal<any>({ api: 'loading', nct: 'loading', trp: 'loading', redis: 'loading' });
+  private healthInterval: ReturnType<typeof setInterval> | null = null;
 
   ngOnInit() {
     this.loadHealth();
-    // Poll every 10 seconds
-    setInterval(() => this.loadHealth(), 10000);
+    this.healthInterval = setInterval(() => this.loadHealth(), 10000);
+  }
+
+  ngOnDestroy() {
+    if (this.healthInterval) {
+      clearInterval(this.healthInterval);
+      this.healthInterval = null;
+    }
   }
 
   private loadHealth() {

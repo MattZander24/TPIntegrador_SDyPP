@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import PlainTextResponse
 
+from common.blockchain import decompress_text
 from voxchain_api.models import Law, LawProposalRequest
 from voxchain_api.services.rabbitmq_publisher import RabbitMQPublisher
 from voxchain_api.services.redis_reader import RedisReader
@@ -31,6 +33,30 @@ async def get_laws(
     """Get all laws, optionally filtered by status."""
     laws = redis.get_laws(status=status)
     return laws
+
+
+@router.get("/next", response_model=Optional[Law])
+async def get_next_law(redis: RedisReader = Depends(get_redis_reader)):
+    """Get the next law that will enter a voting window (round-robin order)."""
+    return redis.get_next_law()
+
+
+@router.get("/queue", response_model=list[Law])
+async def get_law_queue(redis: RedisReader = Depends(get_redis_reader)):
+    """Get the full ordered queue of pending laws."""
+    return redis.get_queued_laws()
+
+
+@router.get("/{law_id}/text", response_class=PlainTextResponse)
+async def get_law_text(law_id: str, redis: RedisReader = Depends(get_redis_reader)):
+    """Get the decompressed text of a law."""
+    law = redis.get_law(law_id)
+    if not law:
+        raise HTTPException(status_code=404, detail="Law not found")
+    compressed = law.get("text_compressed")
+    if not compressed:
+        raise HTTPException(status_code=404, detail="Law text not available")
+    return decompress_text(compressed)
 
 
 @router.get("/{law_id}", response_model=Law)

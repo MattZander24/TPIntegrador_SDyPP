@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from common.queue import select_next_law
 from common.storage.redis_store import VoxChainStore, connect_redis
 from voxchain_api.config import config
 
@@ -29,21 +30,10 @@ class RedisReader:
 
     def get_laws(self, status: Optional[str] = None) -> list[dict]:
         """Get all laws, optionally filtered by status."""
+        all_laws = self.store.all_laws()
         if status:
-            # Get all laws and filter by status
-            # Note: Redis doesn't have a direct index on status, so we scan
-            # In production, you'd want a separate index
-            all_laws = []
-            for law_id in self.store.queued_law_ids():
-                law = self.store.get_law(law_id)
-                if law and law.get("status") == status:
-                    all_laws.append(law)
-            # Also check promulgated/repealed laws (not in queue)
-            # For simplicity, we'll return queued laws for now
-            # A full implementation would scan all law:* keys
-            return all_laws
-        else:
-            return self.store.queued_laws()
+            return [law for law in all_laws if law.get("status") == status]
+        return all_laws
 
     def get_law(self, law_id: str) -> Optional[dict]:
         """Get a specific law by ID."""
@@ -63,6 +53,24 @@ class RedisReader:
     def chain_length(self) -> int:
         """Get the current length of the chain."""
         return self.store.chain_length()
+
+    def get_queued_laws(self) -> list[dict]:
+        """Get all queued laws in order (oldest first)."""
+        return self.store.queued_laws()
+
+    def get_next_law(self) -> Optional[dict]:
+        """Get the next law that will enter a voting window (round-robin)."""
+        pending = self.store.queued_laws()
+        last_author = self.store.get_last_author()
+        return select_next_law(pending, last_author)
+
+    def get_queue_position(self, law_id: str) -> Optional[int]:
+        """Get the position of a law in the queue (0-based, None if not queued)."""
+        ids = self.store.queued_law_ids()
+        try:
+            return ids.index(law_id)
+        except ValueError:
+            return None
 
     def current_window_number(self) -> int:
         """Get the current window number."""

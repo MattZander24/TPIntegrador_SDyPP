@@ -37,13 +37,21 @@ export class EventsService {
       };
 
       this.eventSource.addEventListener('block_added', (event: MessageEvent) => {
-        const data = JSON.parse(event.data);
-        this.latestBlock.set(data.block);
+        try {
+          const data = JSON.parse(event.data);
+          this.latestBlock.set(data.block);
+        } catch (e) {
+          console.error('Failed to parse block_added event:', e);
+        }
       });
 
       this.eventSource.addEventListener('window_opened', (event: MessageEvent) => {
-        const data = JSON.parse(event.data);
-        this.activeWindow.set(data.window);
+        try {
+          const data = JSON.parse(event.data);
+          this.activeWindow.set(data.window);
+        } catch (e) {
+          console.error('Failed to parse window_opened event:', e);
+        }
       });
 
       this.eventSource.addEventListener('window_closed', () => {
@@ -51,9 +59,12 @@ export class EventsService {
       });
 
       this.eventSource.addEventListener('law_updated', (event: MessageEvent) => {
-        const data = JSON.parse(event.data);
-        // Could trigger a refresh of laws list
-        console.log('Law updated:', data);
+        try {
+          const data = JSON.parse(event.data);
+          console.log('Law updated:', data);
+        } catch (e) {
+          console.error('Failed to parse law_updated event:', e);
+        }
       });
 
     } catch (error) {

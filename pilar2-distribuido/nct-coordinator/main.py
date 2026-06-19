@@ -102,10 +102,6 @@ def main() -> None:
             "nct": "ok",
             "redis": "ok" if store.ping() else "down",
             "rabbitmq": "ok" if messaging.is_healthy() else "down",
-            "mode": mode,
-            "is_leader": str(nct.is_leader),
-            "leader_alive": str(monitor.leader_alive),
-            "leader": store.get_leader() or "none",
         }
 
     start_health_server(config.HEALTH_PORT, health)
