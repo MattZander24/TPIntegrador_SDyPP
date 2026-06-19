@@ -26,6 +26,7 @@ from common.blockchain import (
     verify_nonce,
 )
 from common.blockchain.challenge import VALID_ACTIONS
+from common.messaging import QUEUE_PROPUESTAS, QUEUE_RESPUESTA_NONCE
 from common.storage import LawStatus, WindowResult
 from .queue_logic import classify_proposal, cooldown_until, select_next_law
 
@@ -64,8 +65,27 @@ class NCTCoordinator:
 
     # -- registro de handlers ----------------------------------------------
     def wire(self) -> None:
+        """Suscribe los handlers según el rol.
+
+        Las colas de trabajo (``propuestas``, ``respuesta_nonce``) se consumen
+        **sólo siendo líder** (BUG 1 / AGENT.md 4): un follower que también las
+        consumiera competiría con el líder por el reparto round-robin de RabbitMQ
+        y se "tragaría" la mitad de los mensajes sin actuar. Mientras es follower
+        sólo escucha ``nct.heartbeat`` y ``nct_election`` (vía el monitor)."""
+        if self.is_leader:
+            self._subscribe_work_queues()
+
+    def _subscribe_work_queues(self) -> None:
         self.m.on_proposal(self.handle_proposal)
         self.m.on_nonce_response(self.handle_nonce_response)
+
+    def _unsubscribe_work_queues(self) -> None:
+        self.m.unsubscribe(QUEUE_PROPUESTAS)
+        self.m.unsubscribe(QUEUE_RESPUESTA_NONCE)
+
+    def consumed_work_queues(self) -> set[str]:
+        """Colas de trabajo que este NCT consume hoy (gateadas por liderazgo)."""
+        return self.m.consumed_queues() & {QUEUE_PROPUESTAS, QUEUE_RESPUESTA_NONCE}
 
     # -- flujo 1: propuestas (nodo → NCT) ----------------------------------
     def handle_proposal(self, law: dict) -> None:
@@ -139,6 +159,8 @@ class NCTCoordinator:
 
     # -- apertura de ventana (round-robin, dificultad fija) ----------------
     def maybe_open_window(self) -> None:
+        if not self.is_leader:
+            return  # sólo el líder abre ventanas (el follower no toca la cola)
         if self._active is not None:
             return
         law = select_next_law(self.store.queued_laws(), self._last_author)
@@ -264,13 +286,35 @@ class NCTCoordinator:
         self.maybe_open_window()
 
     def become_leader(self) -> None:
-        """Transiciona este NCT de standby a líder tras ganar la elección."""
-        log.info("asumiendo como líder NCT (%s)", self.nct_id)
+        """Transiciona este NCT de follower a líder tras ganar la elección.
+
+        Recién acá abre los consumidores de las colas de trabajo (BUG 1): siendo
+        follower no estaba suscrito a ``propuestas`` ni ``respuesta_nonce``."""
+        if self.is_leader:
+            return
+        log.info("asumiendo como líder NCT (%s): abriendo colas de trabajo", self.nct_id)
         self.is_leader = True
+        self._subscribe_work_queues()
         self.store.clear_active_window()
         self._active = None
-        # Si hay leyes pendientes en Redis, abrimos la primera ventana.
+        # La ventana en curso al momento de la caída se pierde (AGENT.md 4);
+        # si hay leyes pendientes en Redis, abrimos una ventana nueva.
         self.maybe_open_window()
+
+    def step_down(self) -> None:
+        """Líder → follower: cierra las colas de trabajo y suelta la ventana.
+
+        Se invoca al detectar pérdida de liderazgo en Redis (split-brain,
+        AGENT.md 11.4): no basta con ignorar mensajes en memoria, hay que dejar
+        de consumir ``propuestas``/``respuesta_nonce`` para no robarlos del
+        reparto round-robin. La ventana en curso se pierde por diseño (AGENT.md 4)."""
+        if not self.is_leader:
+            return
+        log.warning("step_down (%s): liderazgo perdido, cerrando colas de trabajo",
+                    self.nct_id)
+        self.is_leader = False
+        self._unsubscribe_work_queues()
+        self._active = None
 
     # -- tick periódico para el loop de consumo ----------------------------
     def tick(self) -> None:
@@ -285,8 +329,11 @@ class NCTCoordinator:
         if now - self._last_heartbeat_pub < self.heartbeat_interval:
             return
         self._last_heartbeat_pub = now
-        # Renovar liderazgo en Redis.
-        self.store.renew_leadership(self.nct_id)
+        # Renovar liderazgo en Redis. Si otro NCT ya lo adquirió (split-brain,
+        # AGENT.md 11.4), renovar falla y nos retiramos cerrando las colas.
+        if not self.store.renew_leadership(self.nct_id):
+            self.step_down()
+            return
         self.m.publish_heartbeat({
             "nct_id": self.nct_id,
             "ts": now,

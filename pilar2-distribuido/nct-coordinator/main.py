@@ -33,8 +33,8 @@ def main() -> None:
     messaging.connect()
 
     is_primary = (mode == "primary")
-    heartbeat_interval = config.HEARTBEAT_INTERVAL if is_primary else 0.0
-
+    # El intervalo de heartbeat es el mismo para ambos modos; lo que decide si se
+    # publican es `is_leader` (un standby promovido a líder empieza a emitirlos).
     nct = NCTCoordinator(
         messaging, store,
         n_zeros=config.N_ZEROS,
@@ -44,7 +44,7 @@ def main() -> None:
         cooldown_reproposed=config.COOLDOWN_WINDOWS_REPROPOSED,
         nct_id=config.NCT_ID,
         is_leader=is_primary,
-        heartbeat_interval=heartbeat_interval,
+        heartbeat_interval=config.HEARTBEAT_INTERVAL,
     )
     nct.wire()
 
@@ -54,6 +54,7 @@ def main() -> None:
             candidate_id=config.NCT_ID,
             election_n_zeros=config.ELECTION_N_ZEROS,
             heartbeat_timeout=config.HEARTBEAT_TIMEOUT,
+            on_elected=nct.become_leader,  # ganar la elección abre las colas de trabajo
         )
         monitor.wire()
         log.info("standby: monitoreando heartbeats (timeout=%ds, elección=%d ceros)",
