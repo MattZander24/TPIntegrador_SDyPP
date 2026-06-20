@@ -51,6 +51,7 @@ __all__ = [
 
 def build_rabbitmq(url: str):
     """Construye la implementación pika (import diferido para no exigir pika en tests)."""
+    from common import config
     from .rabbitmq import RabbitMQMessaging
 
-    return RabbitMQMessaging(url)
+    return RabbitMQMessaging(url, ssl_ca_path=config.RABBITMQ_TLS_CA_PATH)

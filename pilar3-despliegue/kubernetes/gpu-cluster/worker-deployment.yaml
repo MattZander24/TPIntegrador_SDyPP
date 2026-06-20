@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: g-git-push-cv
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker
+  template:
+    metadata:
+      labels:
+        app: worker
+    spec:
+      containers:
+        - name: worker
+          image: REGISTRY/worker:latest
+          imagePullPolicy: Always
+          env:
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: username
+            - name: RABBITMQ_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: password
+            - name: RABBITMQ_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: worker-config
+                  key: rabbitmq-host
+            - name: RABBITMQ_URL
+              value: "amqps://$(RABBITMQ_USER):$(RABBITMQ_PASS)@$(RABBITMQ_HOST):5671/"
+            - name: RABBITMQ_TLS_CA_PATH
+              value: /etc/ssl/certs/ca.crt
+            - name: REDIS_URL
+              value: ""
+            - name: WORKER_CAPACITY
+              value: "1"
+            - name: LOG_DIR
+              value: /var/log/voxchain
+            - name: MINER_CPU_SCRIPT
+              value: /app/pilar1-minero/cpu/src/brute_force.py
+          envFrom:
+            - configMapRef:
+                name: voxchain-config
+                optional: true
+          volumeMounts:
+            - name: ca-cert
+              mountPath: /etc/ssl/certs/ca.crt
+              subPath: ca.crt
+              readOnly: true
+      volumes:
+        - name: ca-cert
+          secret:
+            secretName: rabbitmq-ca

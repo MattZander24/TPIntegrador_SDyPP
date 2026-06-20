@@ -1,0 +1,46 @@
+name: "P3 - 02: Deploy Infrastructure"
+on:
+  push:
+    branches: [main]
+    paths:
+      - "pilar3-despliegue/kubernetes/infrastructure/**"
+  workflow_dispatch:
+
+env:
+  K8S_DIR: pilar3-despliegue/kubernetes
+
+jobs:
+  deploy:
+    name: Deploy Redis + RabbitMQ
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: voxchain
+          location: southamerica-east1
+
+      - name: Create namespace
+        run: |
+          kubectl apply -f ${{ env.K8S_DIR }}/namespace.yaml
+
+      - name: Deploy infrastructure
+        run: |
+          kubectl apply -f ${{ env.K8S_DIR }}/infrastructure/
+
+      - name: Verify deployments
+        run: |
+          kubectl wait --for=condition=available --timeout=120s \
+            -n voxchain deployment/rabbitmq

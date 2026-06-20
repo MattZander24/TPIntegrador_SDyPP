@@ -1,0 +1,4 @@
+creation_rules:
+  - path_regex: .*\.enc\.yaml
+    age: >-
+      age1...  # Reemplazar con la clave pública AGE generada con `age-keygen`

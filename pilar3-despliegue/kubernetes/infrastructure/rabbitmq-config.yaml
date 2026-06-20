@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rabbitmq-config
+  namespace: voxchain
+data:
+  rabbitmq.conf: |
+    listeners.tcp.default = 5672
+    listeners.ssl.default = 5671
+    ssl_options.certfile = /etc/rabbitmq/ssl/rabbitmq-cert.pem
+    ssl_options.keyfile = /etc/rabbitmq/ssl/rabbitmq-key.pem
+    ssl_options.cacertfile = /etc/rabbitmq/ssl/ca.crt
+    ssl_options.verify = verify_peer
+    ssl_options.fail_if_no_peer_cert = false
+    management.ssl.port = 15671
+    management.ssl.certfile = /etc/rabbitmq/ssl/rabbitmq-cert.pem
+    management.ssl.keyfile = /etc/rabbitmq/ssl/rabbitmq-key.pem
+    management.ssl.cacertfile = /etc/rabbitmq/ssl/ca.crt

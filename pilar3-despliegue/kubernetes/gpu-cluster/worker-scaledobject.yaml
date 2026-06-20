@@ -1,0 +1,33 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: worker-scaledobject
+  namespace: g-git-push-cv
+spec:
+  scaleTargetRef:
+    name: worker
+    apiVersion: apps/v1
+    kind: Deployment
+  minReplicaCount: 1
+  maxReplicaCount: 10
+  pollingInterval: 10
+  cooldownPeriod: 60
+  triggers:
+    - type: rabbitmq
+      metadata:
+        queueName: tareas_trp
+        queueLength: "1"
+        protocol: amqps
+      authenticationRef:
+        name: keda-trigger-auth-rabbitmq
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: keda-trigger-auth-rabbitmq
+  namespace: g-git-push-cv
+spec:
+  secretTargetRef:
+    - parameter: host
+      name: rabbitmq-credentials
+      key: keda-host

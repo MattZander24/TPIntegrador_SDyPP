@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: voxchain-api
+  namespace: voxchain
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: voxchain-api
+  template:
+    metadata:
+      labels:
+        app: voxchain-api
+    spec:
+      containers:
+        - name: api
+          image: REGISTRY/voxchain-api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: RABBITMQ_URL
+              value: "amqp://guest:guest@rabbitmq:5672/"
+            - name: REDIS_URL
+              value: "redis://redis:6379/0"
+            - name: NCT_HEALTH_URL
+              value: "http://nct:8080/health"
+            - name: TRP_HEALTH_URL
+              value: "http://transaction-pool:8080/health"
+            - name: LOG_DIR
+              value: "/var/log/voxchain"
+          envFrom:
+            - configMapRef:
+                name: voxchain-config
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10

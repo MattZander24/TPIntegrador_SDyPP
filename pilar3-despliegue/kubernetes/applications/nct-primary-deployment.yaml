@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nct-primary
+  namespace: voxchain
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nct-primary
+  template:
+    metadata:
+      labels:
+        app: nct-primary
+    spec:
+      containers:
+        - name: nct
+          image: REGISTRY/nct:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: health
+          env:
+            - name: RABBITMQ_URL
+              value: "amqp://guest:guest@rabbitmq:5672/"
+            - name: REDIS_URL
+              value: "redis://redis:6379/0"
+            - name: NCT_MODE
+              value: "primary"
+            - name: NCT_ID
+              value: "nct-primary"
+            - name: LOG_DIR
+              value: "/var/log/voxchain"
+          envFrom:
+            - configMapRef:
+                name: voxchain-config
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10

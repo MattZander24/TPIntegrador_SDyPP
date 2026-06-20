@@ -1,0 +1,75 @@
+name: "P3 - 04: Deploy GPU Workers"
+on:
+  push:
+    branches: [main]
+    paths:
+      - "pilar3-despliegue/kubernetes/gpu-cluster/**"
+  workflow_dispatch:
+    inputs:
+      rabbitmq_host:
+        description: "RabbitMQ LoadBalancer IP or DNS"
+        required: true
+        type: string
+
+env:
+  K8S_DIR: pilar3-despliegue/kubernetes/gpu-cluster
+  NAMESPACE: g-git-push-cv
+
+jobs:
+  deploy:
+    name: Deploy Workers to k3s
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure kubectl for k3s
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.K3S_KUBECONFIG }}" > ~/.kube/config
+
+      - name: Create namespace
+        run: |
+          kubectl apply -f ${{ env.K8S_DIR }}/namespace.yaml
+
+      - name: Configure RabbitMQ host
+        run: |
+          HOST="${{ github.event.inputs.rabbitmq_host }}"
+          if [ -z "$HOST" ]; then
+            HOST="placeholder.voxchain.local"
+          fi
+          kubectl create configmap worker-config \
+            --namespace ${{ env.NAMESPACE }} \
+            --from-literal=rabbitmq-host="$HOST" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy secrets
+        env:
+          RABBITMQ_USER: ${{ secrets.RABBITMQ_USER }}
+          RABBITMQ_PASS: ${{ secrets.RABBITMQ_PASS }}
+          RABBITMQ_CA: ${{ secrets.RABBITMQ_CA_CERT }}
+        run: |
+          kubectl create secret generic rabbitmq-ca \
+            --namespace ${{ env.NAMESPACE }} \
+            --from-literal=ca.crt="${RABBITMQ_CA}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          KEDA_HOST="amqps://${RABBITMQ_USER}:${RABBITMQ_PASS}@placeholder.voxchain.local:5671/"
+          kubectl create secret generic rabbitmq-credentials \
+            --namespace ${{ env.NAMESPACE }} \
+            --from-literal=username="${RABBITMQ_USER}" \
+            --from-literal=password="${RABBITMQ_PASS}" \
+            --from-literal=keda-host="${KEDA_HOST}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy worker manifests
+        run: |
+          kubectl apply -f ${{ env.K8S_DIR }}/worker-deployment.yaml
+          kubectl apply -f ${{ env.K8S_DIR }}/worker-hpa.yaml
+          kubectl apply -f ${{ env.K8S_DIR }}/worker-scaledobject.yaml
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status \
+            -n ${{ env.NAMESPACE }} \
+            deployment/worker \
+            --timeout=120s

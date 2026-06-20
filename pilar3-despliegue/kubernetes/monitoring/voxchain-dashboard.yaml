@@ -1,0 +1,110 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: voxchain-grafana-dashboard
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  voxchain-dashboard.json: |
+    {
+      "__inputs": [],
+      "__requires": [],
+      "title": "VoxChain",
+      "uid": "voxchain",
+      "version": 1,
+      "timezone": "browser",
+      "editable": true,
+      "panels": [
+        {
+          "title": "Propuestas / seg",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+          "targets": [{
+            "expr": "rate(voxchain_nct_proposals_total[1m])",
+            "legendFormat": "propuestas/s"
+          }]
+        },
+        {
+          "title": "Bloques sellados",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+          "targets": [{
+            "expr": "voxchain_nct_blocks_sealed_total",
+            "legendFormat": "bloques"
+          }]
+        },
+        {
+          "title": "Workers activos",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
+          "targets": [{
+            "expr": "voxchain_trp_active_workers",
+            "legendFormat": "workers"
+          }]
+        },
+        {
+          "title": "NCT Líder",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
+          "targets": [{
+            "expr": "voxchain_nct_is_leader",
+            "legendFormat": "líder"
+          }]
+        },
+        {
+          "title": "Throughput de propuestas",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+          "targets": [{
+            "expr": "rate(voxchain_nct_proposals_total[1m])",
+            "legendFormat": "propuestas/s"
+          }]
+        },
+        {
+          "title": "Workers activos (histórico)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+          "targets": [{
+            "expr": "voxchain_trp_active_workers",
+            "legendFormat": "workers"
+          }]
+        },
+        {
+          "title": "HTTP Requests por minuto",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+          "targets": [{
+            "expr": "sum(rate(voxchain_api_http_requests_total[1m]))",
+            "legendFormat": "requests/min"
+          }]
+        },
+        {
+          "title": "Latencia HTTP (p99)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+          "targets": [{
+            "expr": "histogram_quantile(0.99, sum(rate(voxchain_api_http_request_duration_seconds_bucket[1m])) by (le))",
+            "legendFormat": "p99"
+          }]
+        },
+        {
+          "title": "Nonces encontrados por worker",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+          "targets": [{
+            "expr": "rate(voxchain_worker_nonces_found_total[1m])",
+            "legendFormat": "nonces/min"
+          }]
+        },
+        {
+          "title": "Worker ocupado",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+          "targets": [{
+            "expr": "voxchain_worker_busy",
+            "legendFormat": "{{worker_id}}"
+          }]
+        }
+      ]
+    }

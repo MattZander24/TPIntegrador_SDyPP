@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import time
 
+from common.metrics import trp_active_workers, trp_tasks_published_total
 from .fragmentation import fragment_range
 
 log = logging.getLogger("voxchain.trp")
@@ -72,6 +73,7 @@ class TransactionPool:
                         "(autoescalado = Pilar 3); dificultad NO se reduce")
 
         chunks = fragment_range(0, self.nonce_space, self.fragment_size)
+        trp_tasks_published_total.inc(len(chunks))
         for idx, (rmin, rmax) in enumerate(chunks):
             self.m.publish_task({
                 "voting_window_id": wid,
@@ -93,3 +95,4 @@ class TransactionPool:
         stale = [w for w, d in self._workers.items() if d["last_seen"] < cutoff]
         for w in stale:
             del self._workers[w]
+        trp_active_workers.set(len(self._fresh_workers()))

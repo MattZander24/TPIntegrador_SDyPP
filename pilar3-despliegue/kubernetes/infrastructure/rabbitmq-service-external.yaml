@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq-external
+  namespace: voxchain
+  annotations:
+    networking.gke.io/load-balancer-type: "External"
+spec:
+  type: LoadBalancer
+  selector:
+    app: rabbitmq
+  ports:
+    - port: 5671
+      targetPort: 5671
+      name: amqps

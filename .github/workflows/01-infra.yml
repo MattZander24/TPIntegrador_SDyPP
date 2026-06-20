@@ -1,0 +1,45 @@
+name: "P3 - 01: Infra (OpenTofu)"
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "OpenTofu action"
+        type: choice
+        options:
+          - plan
+          - apply
+        default: plan
+
+env:
+  TF_DIR: pilar3-despliegue/terraform/gke
+  TF_VERSION: 1.7.0
+
+jobs:
+  tofu:
+    name: OpenTofu ${{ inputs.action }}
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.TF_VERSION }}
+
+      - name: tofu init
+        working-directory: ${{ env.TF_DIR }}
+        run: tofu init
+
+      - name: tofu ${{ inputs.action }}
+        working-directory: ${{ env.TF_DIR }}
+        run: tofu ${{ inputs.action }} -auto-approve

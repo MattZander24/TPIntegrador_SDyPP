@@ -28,6 +28,12 @@ from common.blockchain import (
 from common.blockchain.challenge import VALID_ACTIONS
 from common.messaging import QUEUE_PROPUESTAS, QUEUE_RESPUESTA_NONCE
 from common.storage import LawStatus, WindowResult
+from common.metrics import (
+    nct_blocks_sealed_total,
+    nct_is_leader,
+    nct_proposals_total,
+    nct_windows_opened_total,
+)
 from .queue_logic import classify_proposal, cooldown_until, select_next_law
 
 log = logging.getLogger("voxchain.nct")
@@ -100,6 +106,8 @@ class NCTCoordinator:
         action = law.get("action", ACTION_PROMULGACION)
         law_id = law.get("law_id") or str(uuid.uuid4())
         created_at = law.get("created_at") or _iso(self.now())
+
+        nct_proposals_total.inc()
 
         if not author or not text_hash:
             log.warning("propuesta inválida (faltan author/text_hash): %s", law)
@@ -199,6 +207,8 @@ class NCTCoordinator:
         self._last_author = law.get("author_pubkey")
         self.store.set_last_author(self._last_author)
 
+        nct_windows_opened_total.inc()
+
         self.m.publish_challenge({
             "voting_window_id": voting_window_id, "law_id": law_id,
             "n_zeros_required": n_zeros_required, "deadline": _iso(deadline),
@@ -275,6 +285,7 @@ class NCTCoordinator:
         self.store.set_law_status(law_id, new_status)
         self.store.clear_active_window()
         self._active = None
+        nct_blocks_sealed_total.inc()
         log.info("bloque sellado %s (ley %s → %s, nonce %d, por %s)",
                  block.block_hash[:12], law_id, new_status, nonce, winner)
         self.maybe_open_window()
@@ -306,6 +317,7 @@ class NCTCoordinator:
         follower no estaba suscrito a ``propuestas`` ni ``respuesta_nonce``."""
         if self.is_leader:
             return
+        nct_is_leader.set(1)
         log.info("asumiendo como líder NCT (%s): abriendo colas de trabajo", self.nct_id)
         self.is_leader = True
         self._subscribe_work_queues()
@@ -327,6 +339,7 @@ class NCTCoordinator:
         empiece a observar heartbeats del nuevo líder."""
         if not self.is_leader:
             return
+        nct_is_leader.set(0)
         log.warning("step_down (%s): liderazgo perdido, cerrando colas de trabajo",
                     self.nct_id)
         self.is_leader = False

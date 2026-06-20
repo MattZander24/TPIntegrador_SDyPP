@@ -6,9 +6,14 @@ import asyncio
 import json
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+import time
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from prometheus_client import exposition
+
+from common.metrics import api_http_request_duration_seconds, api_http_requests_total
 
 from voxchain_api.config import config
 from voxchain_api.routers import chain, health, laws, windows
@@ -52,6 +57,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def metrics_middleware(request: Request, call_next):
+    start = time.monotonic()
+    response = await call_next(request)
+    duration = time.monotonic() - start
+    route = request.url.path
+    method = request.method
+    api_http_requests_total.labels(method=method, path=route).inc()
+    api_http_request_duration_seconds.labels(method=method, path=route).observe(duration)
+    return response
+
+
+@app.get("/metrics")
+async def metrics():
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(exposition.generate_latest().decode(),
+                             media_type="text/plain; version=0.0.4")
 
 # Include routers
 app.include_router(chain.router)

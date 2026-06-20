@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: g-git-push-cv
+
+resources:
+  - namespace.yaml
+  - worker-config.yaml
+  - rabbitmq-ca-secret.yaml
+  - rabbitmq-credentials-secret.yaml
+  - worker-deployment.yaml
+  - worker-hpa.yaml
+  - worker-scaledobject.yaml

@@ -34,10 +34,11 @@ log = logging.getLogger("voxchain.messaging")
 
 class RabbitMQMessaging(Messaging):
     def __init__(self, url: str, connect_retries: int = 30,
-                 retry_delay: float = 2.0):
+                 retry_delay: float = 2.0, ssl_ca_path: str = ""):
         self.url = url
         self.connect_retries = connect_retries
         self.retry_delay = retry_delay
+        self.ssl_ca_path = ssl_ca_path
         self._conn = None
         self._ch = None
         self._handlers: dict[str, Callable[[dict], None]] = {}
@@ -48,6 +49,10 @@ class RabbitMQMessaging(Messaging):
     # -- conexión / topología ----------------------------------------------
     def connect(self) -> None:
         params = pika.URLParameters(self.url)
+        if self.url.startswith("amqps://") and self.ssl_ca_path:
+            import ssl
+            context = ssl.create_default_context(cafile=self.ssl_ca_path)
+            params.ssl_options = pika.SSLOptions(context)
         last_err = None
         for attempt in range(1, self.connect_retries + 1):
             try:
