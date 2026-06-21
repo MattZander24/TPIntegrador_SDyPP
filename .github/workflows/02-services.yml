@@ -43,4 +43,4 @@ jobs:
       - name: Verify deployments
         run: |
           kubectl wait --for=condition=available --timeout=120s \
-            -n voxchain deployment/rabbitmq
+            -n voxchain statefulset/rabbitmq
