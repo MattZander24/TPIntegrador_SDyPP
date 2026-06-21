@@ -13,6 +13,7 @@ spec:
       labels:
         app: pool-coordinator
     spec:
+      terminationGracePeriodSeconds: 10
       containers:
         - name: pool-coordinator
           image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/pool-coordinator:latest

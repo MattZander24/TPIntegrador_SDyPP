@@ -13,6 +13,7 @@ spec:
       labels:
         app: worker
     spec:
+      terminationGracePeriodSeconds: 10
       containers:
         - name: worker
           image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker:latest

@@ -13,6 +13,7 @@ spec:
       labels:
         app: pool-miner
     spec:
+      terminationGracePeriodSeconds: 10
       containers:
         - name: pool-miner
           image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker:latest
