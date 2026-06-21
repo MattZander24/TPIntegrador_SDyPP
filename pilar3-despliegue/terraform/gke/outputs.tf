@@ -23,6 +23,11 @@ output "workload_identity_pool" {
   value       = "${var.project_id}.svc.id.goog"
 }
 
+output "workload_identity_provider" {
+  description = "Workload Identity Federation provider for GitHub Actions"
+  value       = "${google_iam_workload_identity_pool.github.name}/providers/github-provider"
+}
+
 output "get_credentials" {
   description = "Command to configure kubectl"
   value       = "gcloud container clusters get-credentials ${google_container_cluster.cluster.name} --zone ${var.zone} --project ${var.project_id}"
