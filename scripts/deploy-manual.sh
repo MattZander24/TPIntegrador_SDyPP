@@ -9,7 +9,7 @@ set -euo pipefail
 #   - docker, gcloud, kubectl instalados
 #   - `gcloud auth login` ejecutado (con acceso al proyecto voxchain)
 #   - Contextos k3s configurados según corresponda:
-#       valentin@k3s-cluster, gustavo@k3s-cluster, SDyPP-2026-GCP-cluster
+#       valentin@k3s-cluster, gustavo@k3s-cluster, matt@k3s-cluster
 #
 # Uso:
 #   ./scripts/deploy-manual.sh                              # GKE + k3s (cluster=valentin)
@@ -19,7 +19,7 @@ set -euo pipefail
 # Clusters disponibles para --k3s:
 #   valentin    → valentin@k3s-cluster    (default)
 #   gustavo     → gustavo@k3s-cluster
-#   profesores  → SDyPP-2026-GCP-cluster
+#   matt        → matt@k3s-cluster
 #
 # Lo que hace cada modo:
 #
@@ -58,7 +58,7 @@ NAMESPACE_K3S="g-git-push-cv"
 declare -A K3S_CONTEXTS
 K3S_CONTEXTS[valentin]="valentin@k3s-cluster"
 K3S_CONTEXTS[gustavo]="gustavo@k3s-cluster"
-K3S_CONTEXTS[profesores]="SDyPP-2026-GCP-cluster"
+K3S_CONTEXTS[matt]="matt@k3s-cluster"
 
 MODE=""
 CLUSTER="valentin"
@@ -262,7 +262,7 @@ case "$MODE" in
         echo "  --gke              solo GKE (build, push, deploy)"
         echo "  --k3s              solo k3s (usa imágenes ya en registry)"
         echo "  --all              GKE + k3s (default)"
-        echo "  --cluster <nombre> cluster k3s destino: valentin (default), gustavo, profesores"
+        echo "  --cluster <nombre> cluster k3s destino: valentin (default), gustavo, matt"
         exit 1
         ;;
 esac
