@@ -10,6 +10,7 @@ env:
   K8S_DIR: pilar3-despliegue/kubernetes/gpu-cluster
   NAMESPACE: g-git-push-cv
   REGION: southamerica-east1
+  ZONE: southamerica-east1-a
   PROJECT_ID: voxchain
 
 jobs:
@@ -38,7 +39,7 @@ jobs:
         uses: google-github-actions/get-gke-credentials@v2
         with:
           cluster_name: voxchain
-          location: ${{ env.REGION }}
+          location: ${{ env.ZONE }}
 
       - name: Get RabbitMQ LoadBalancer IP
         id: rabbitmq

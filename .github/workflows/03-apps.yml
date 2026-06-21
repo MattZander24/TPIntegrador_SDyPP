@@ -13,6 +13,7 @@ on:
 
 env:
   REGION: southamerica-east1
+  ZONE: southamerica-east1-a
   PROJECT_ID: voxchain
   REGISTRY: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images
 
@@ -84,7 +85,7 @@ jobs:
         uses: google-github-actions/get-gke-credentials@v2
         with:
           cluster_name: voxchain
-          location: ${{ env.REGION }}
+          location: ${{ env.ZONE }}
 
       - name: Deploy to GKE
         if: matrix.service.deploy
