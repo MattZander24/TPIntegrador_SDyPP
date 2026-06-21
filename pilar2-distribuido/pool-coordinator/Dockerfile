@@ -5,7 +5,7 @@ WORKDIR /app
 COPY pilar2-distribuido /app/pilar2-distribuido
 RUN pip install --no-cache-dir -r /app/pilar2-distribuido/worker/requirements.txt redis
 
-ENV PYTHONPATH=/app/pilar2-distribuido
+ENV PYTHONPATH=/app/pilar2-distribuido:/app/pilar2-distribuido/pool-coordinator
 
 EXPOSE 8080 9001
 

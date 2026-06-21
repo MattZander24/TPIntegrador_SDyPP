@@ -14,6 +14,18 @@ from typing import Callable
 
 from prometheus_client import exposition
 
+def json_response(handler, data, status=200):
+    """Escribe una respuesta JSON en un BaseHTTPRequestHandler.
+
+    data=None → cuerpo vacío (para 204 No Content).
+    """
+    body = b"" if data is None else json.dumps(data).encode()
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.end_headers()
+    if body:
+        handler.wfile.write(body)
 
 def start_health_server(port: int, status_provider: Callable[[], dict]) -> ThreadingHTTPServer:
     """Arranca el server en un hilo daemon y devuelve la instancia."""
