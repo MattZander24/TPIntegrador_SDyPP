@@ -267,6 +267,12 @@ resource "google_project_iam_member" "cicd_artifact_writer" {
   member  = "serviceAccount:${google_service_account.cicd.email}"
 }
 
+resource "google_project_iam_member" "nodes_artifact_reader" {
+  project = var.project_id
+  role    = "roles/artifactregistry.reader"
+  member  = "serviceAccount:${google_service_account.nodes.email}"
+}
+
 resource "google_service_account_iam_member" "cicd_wif" {
   service_account_id = google_service_account.cicd.name
   role               = "roles/iam.workloadIdentityUser"
