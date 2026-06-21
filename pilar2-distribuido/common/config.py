@@ -43,6 +43,12 @@ FRAGMENT_SIZE = get_int("FRAGMENT_SIZE", 1_000_000)
 RABBITMQ_TLS_CA_PATH = get("RABBITMQ_TLS_CA_PATH", "")
 
 # Health endpoints
+# Pool
+POOL_ID = get("POOL_ID", "pool-default")
+POOL_CAPACITY = get_int("POOL_CAPACITY", 1)
+POOL_HTTP_PORT = get_int("POOL_HTTP_PORT", 9001)
+POOL_COORDINATOR_URL = get("POOL_COORDINATOR_URL", "http://pool-coordinator:9001")
+
 HEALTH_PORT = get_int("HEALTH_PORT", 8080)
 
 # Bully distribuido (AGENT.md 4)

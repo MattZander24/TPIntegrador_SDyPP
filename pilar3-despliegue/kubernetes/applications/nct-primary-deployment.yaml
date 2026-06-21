@@ -21,8 +21,18 @@ spec:
             - containerPort: 8080
               name: health
           env:
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: username
+            - name: RABBITMQ_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: password
             - name: RABBITMQ_URL
-              value: "amqp://guest:guest@rabbitmq:5672/"
+              value: "amqp://$(RABBITMQ_USER):$(RABBITMQ_PASS)@rabbitmq:5672/"
             - name: REDIS_URL
               value: "redis://redis:6379/0"
             - name: NCT_MODE

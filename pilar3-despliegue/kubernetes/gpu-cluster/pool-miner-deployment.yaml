@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pool-miner
+  namespace: g-git-push-cv
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pool-miner
+  template:
+    metadata:
+      labels:
+        app: pool-miner
+    spec:
+      containers:
+        - name: pool-miner
+          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker:latest
+          imagePullPolicy: Always
+          env:
+            - name: WORKER_MODE
+              value: "pool-miner"
+            - name: POOL_COORDINATOR_URL
+              value: "http://pool-coordinator:9001"
+            - name: WORKER_CAPACITY
+              value: "1"
+            - name: LOG_DIR
+              value: /var/log/voxchain
+            - name: MINER_CPU_SCRIPT
+              value: /app/pilar1-minero/cpu/src/brute_force.py

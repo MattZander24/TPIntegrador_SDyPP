@@ -67,6 +67,28 @@ api_http_requests_total = Counter(
     namespace="voxchain", subsystem="api",
     labelnames=["method", "path"],
 )
+# ----- Pool -----
+pool_miners_registered = Gauge(
+    "voxchain_pool_miners_registered",
+    "Miners registrados actualmente en el pool coordinator",
+    namespace="voxchain", subsystem="pool",
+)
+pool_work_distributed_total = Counter(
+    "voxchain_pool_work_distributed_total",
+    "Sub-tareas de minería distribuidas a miners",
+    namespace="voxchain", subsystem="pool",
+)
+pool_nonces_found_total = Counter(
+    "voxchain_pool_nonces_found_total",
+    "Nonces válidos recibidos de miners del pool",
+    namespace="voxchain", subsystem="pool",
+)
+pool_is_leader = Gauge(
+    "voxchain_pool_is_leader",
+    "1 si este pool coordinator es el líder actual",
+    namespace="voxchain", subsystem="pool",
+)
+
 api_http_request_duration_seconds = Histogram(
     "voxchain_api_http_request_duration_seconds",
     "Duración de requests HTTP en segundos",

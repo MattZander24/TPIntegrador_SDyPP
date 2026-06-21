@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: pool-coordinator
+  namespace: g-git-push-cv
+spec:
+  selector:
+    app: pool-coordinator
+  ports:
+    - name: http
+      port: 9001
+      targetPort: 9001
+    - name: health
+      port: 8080
+      targetPort: 8080
