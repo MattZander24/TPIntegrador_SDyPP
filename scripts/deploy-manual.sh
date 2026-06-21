@@ -8,12 +8,18 @@ set -euo pipefail
 # Requisitos:
 #   - docker, gcloud, kubectl instalados
 #   - `gcloud auth login` ejecutado (con acceso al proyecto voxchain)
-#   - Contexto k3s configurado: `valentin@k3s-cluster`
+#   - Contextos k3s configurados según corresponda:
+#       valentin@k3s-cluster, gustavo@k3s-cluster, SDyPP-2026-GCP-cluster
 #
 # Uso:
-#   ./scripts/deploy-manual.sh           # GKE + k3s
-#   ./scripts/deploy-manual.sh --gke     # solo GKE (build, push, deploy)
-#   ./scripts/deploy-manual.sh --k3s     # solo k3s (usa imágenes ya en registry)
+#   ./scripts/deploy-manual.sh                              # GKE + k3s (cluster=valentin)
+#   ./scripts/deploy-manual.sh --gke                        # solo GKE
+#   ./scripts/deploy-manual.sh --k3s [--cluster <nombre>]   # solo k3s
+#
+# Clusters disponibles para --k3s:
+#   valentin    → valentin@k3s-cluster    (default)
+#   gustavo     → gustavo@k3s-cluster
+#   profesores  → SDyPP-2026-GCP-cluster
 #
 # Lo que hace cada modo:
 #
@@ -45,11 +51,35 @@ ZONE="${REGION}-a"
 PROJECT_ID="voxchain"
 REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/voxchain-images"
 GKE_CTX="gke_${PROJECT_ID}_${ZONE}_voxchain"
-K3S_CTX="valentin@k3s-cluster"
 NAMESPACE_GKE="voxchain"
 NAMESPACE_K3S="g-git-push-cv"
 
-MODE="${1:---all}"
+# Map de nombres de cluster → contexto kubectl
+declare -A K3S_CONTEXTS
+K3S_CONTEXTS[valentin]="valentin@k3s-cluster"
+K3S_CONTEXTS[gustavo]="gustavo@k3s-cluster"
+K3S_CONTEXTS[profesores]="SDyPP-2026-GCP-cluster"
+
+MODE=""
+CLUSTER="valentin"
+
+# ── parse args ───────────────────────────────────────────────
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --gke) MODE="--gke"; shift ;;
+        --k3s) MODE="--k3s"; shift ;;
+        --all) MODE="--all"; shift ;;
+        --cluster) CLUSTER="${2:-valentin}"; shift 2 ;;
+        *) die "Argumento desconocido: $1 (usá --gke, --k3s, --all, --cluster)" ;;
+    esac
+done
+MODE="${MODE:---all}"
+
+# Validar cluster
+K3S_CTX="${K3S_CONTEXTS[$CLUSTER]:-}"
+if [[ -z "$K3S_CTX" ]]; then
+    die "Cluster desconocido: '$CLUSTER'. Válidos: ${!K3S_CONTEXTS[*]}"
+fi
 
 # ── util ──────────────────────────────────────────────────────
 info()  { echo -e "\e[1;34m•\e[0m $*"; }
@@ -227,7 +257,12 @@ case "$MODE" in
         deploy_k3s
         ;;
     *)
-        echo "Uso: $0 [--all | --gke | --k3s]"
+        echo "Uso: $0 [--gke | --k3s | --all] [--cluster <nombre>]"
+        echo ""
+        echo "  --gke              solo GKE (build, push, deploy)"
+        echo "  --k3s              solo k3s (usa imágenes ya en registry)"
+        echo "  --all              GKE + k3s (default)"
+        echo "  --cluster <nombre> cluster k3s destino: valentin (default), gustavo, profesores"
         exit 1
         ;;
 esac

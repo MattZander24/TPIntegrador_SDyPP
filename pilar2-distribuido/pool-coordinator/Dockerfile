@@ -3,7 +3,7 @@ FROM python:3.12-slim
 WORKDIR /app
 
 COPY pilar2-distribuido /app/pilar2-distribuido
-RUN pip install --no-cache-dir -r pilar2-distribuido/requirements.txt
+RUN pip install --no-cache-dir -r /app/pilar2-distribuido/worker/requirements.txt redis
 
 ENV PYTHONPATH=/app/pilar2-distribuido
 
