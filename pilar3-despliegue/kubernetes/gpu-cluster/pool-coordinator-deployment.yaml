@@ -50,6 +50,18 @@ spec:
               value: "9001"
             - name: LEADER_LEASE_TTL
               value: "10"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
           volumeMounts:
             - name: ca-cert
               mountPath: /etc/ssl/certs/ca.crt

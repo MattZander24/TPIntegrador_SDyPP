@@ -17,6 +17,9 @@ spec:
         - name: pool-miner
           image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker:latest
           imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: health
           env:
             - name: WORKER_MODE
               value: "pool-miner"
@@ -28,3 +31,15 @@ spec:
               value: /var/log/voxchain
             - name: MINER_CPU_SCRIPT
               value: /app/pilar1-minero/cpu/src/brute_force.py
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10

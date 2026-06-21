@@ -9,6 +9,7 @@ on:
       - "pilar2-distribuido/voxchain_api/**"
       - "pilar2-distribuido/voxchain-frontend/**"
       - "pilar2-distribuido/worker/**"
+      - "pilar2-distribuido/pool-coordinator/**"
   workflow_dispatch:
 
 env:
@@ -54,6 +55,12 @@ jobs:
             deploy: true
             kind: deployment
             k8s_name: voxchain-api
+          - name: pool-coordinator
+            container_name: pool-coordinator
+            dockerfile: pilar2-distribuido/pool-coordinator/Dockerfile
+            context: .
+            deploy: false
+            kind: none
           - name: voxchain-frontend
             container_name: frontend
             dockerfile: pilar2-distribuido/voxchain-frontend/Dockerfile

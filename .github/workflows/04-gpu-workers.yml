@@ -88,9 +88,11 @@ jobs:
           kubectl apply -f ${{ env.K8S_DIR }}/pool-miner-deployment.yaml
           kubectl apply -f ${{ env.K8S_DIR }}/pool-miner-hpa.yaml
 
-      - name: Verify deployment
+      - name: Verify deployments
         run: |
-          kubectl rollout status \
-            -n ${{ env.NAMESPACE }} \
-            deployment/worker \
-            --timeout=120s
+          for deploy in worker pool-coordinator pool-miner; do
+            kubectl rollout status \
+              -n ${{ env.NAMESPACE }} \
+              deployment/$deploy \
+              --timeout=120s
+          done
