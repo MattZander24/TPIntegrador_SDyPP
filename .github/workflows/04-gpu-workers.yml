@@ -83,7 +83,10 @@ jobs:
         run: |
           kubectl apply -f ${{ env.K8S_DIR }}/worker-deployment.yaml
           kubectl apply -f ${{ env.K8S_DIR }}/worker-hpa.yaml
-          kubectl apply -f ${{ env.K8S_DIR }}/worker-scaledobject.yaml
+          kubectl apply -f ${{ env.K8S_DIR }}/pool-coordinator-deployment.yaml
+          kubectl apply -f ${{ env.K8S_DIR }}/pool-coordinator-service.yaml
+          kubectl apply -f ${{ env.K8S_DIR }}/pool-miner-deployment.yaml
+          kubectl apply -f ${{ env.K8S_DIR }}/pool-miner-hpa.yaml
 
       - name: Verify deployment
         run: |
