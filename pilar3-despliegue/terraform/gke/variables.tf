@@ -61,5 +61,5 @@ variable "apps_max_nodes" {
 variable "github_repository" {
   description = "GitHub repository for CI/CD (formato: owner/repo)"
   type        = string
-  default     = "valentin/TPIntegrador_SDyPP"
+  default     = "MattZander24/TPIntegrador_SDyPP"
 }
