@@ -9,7 +9,7 @@ resources:
   - rabbitmq-credentials-secret.yaml
   - worker-deployment.yaml
   - worker-hpa.yaml
-  - worker-scaledobject.yaml
+
   - pool-coordinator-deployment.yaml
   - pool-coordinator-service.yaml
   - pool-miner-deployment.yaml
