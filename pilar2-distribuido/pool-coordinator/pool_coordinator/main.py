@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import signal
+import threading
+
 from common import config
 from common.health import start_health_server
 from common.logging_setup import setup_logging
@@ -12,6 +15,7 @@ from pool_coordinator.server import start_pool_http_server
 
 
 def main() -> None:
+    signal.signal(signal.SIGTERM, signal.getsignal(signal.SIGINT))
     log = setup_logging("pool-coordinator")
     log.info("iniciando Pool Coordinator")
 
@@ -39,7 +43,6 @@ def main() -> None:
     })
 
     try:
-        import threading
         t = threading.Thread(target=httpd.serve_forever, daemon=True)
         t.start()
         messaging.start_consuming(tick=coordinator.tick, tick_interval=1.0)

@@ -8,6 +8,7 @@ Modos:
 from __future__ import annotations
 
 import os
+import signal
 import socket
 
 from common import config
@@ -19,6 +20,7 @@ from worker_pkg.worker import Worker
 
 
 def main() -> None:
+    signal.signal(signal.SIGTERM, signal.getsignal(signal.SIGINT))
     mode = os.getenv("WORKER_MODE", "rabbitmq")
     log = setup_logging("worker")
     worker_id = os.getenv("WORKER_ID", f"worker-{socket.gethostname()}")
