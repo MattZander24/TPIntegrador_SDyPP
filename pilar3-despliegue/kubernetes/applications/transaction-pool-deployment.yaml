@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: trp
-          image: REGISTRY/transaction-pool:latest
+          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/transaction-pool:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8080

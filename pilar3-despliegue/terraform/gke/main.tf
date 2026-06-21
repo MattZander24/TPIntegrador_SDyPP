@@ -187,44 +187,10 @@ resource "google_service_account_iam_member" "external_secrets_wif" {
   member             = format("serviceAccount:%s.svc.id.goog[external-secrets/external-secrets]",
     var.project_id
   )
+  depends_on = [google_container_cluster.cluster]
 }
 
 # ---- Secret Manager: RabbitMQ credenciales y TLS ----
-resource "google_secret_manager_secret" "rabbitmq_user" {
-  secret_id = "rabbitmq-user"
-  replication {
-    auto {}
-  }
-}
-
-resource "google_secret_manager_secret" "rabbitmq_pass" {
-  secret_id = "rabbitmq-pass"
-  replication {
-    auto {}
-  }
-}
-
-resource "google_secret_manager_secret" "rabbitmq_tls_crt" {
-  secret_id = "rabbitmq-tls-crt"
-  replication {
-    auto {}
-  }
-}
-
-resource "google_secret_manager_secret" "rabbitmq_tls_key" {
-  secret_id = "rabbitmq-tls-key"
-  replication {
-    auto {}
-  }
-}
-
-resource "google_secret_manager_secret" "rabbitmq_ca_crt" {
-  secret_id = "rabbitmq-ca-crt"
-  replication {
-    auto {}
-  }
-}
-
 # ---- Artifact Registry ----
 resource "google_artifact_registry_repository" "images" {
   location      = var.region
@@ -278,6 +244,7 @@ resource "google_iam_workload_identity_pool_provider" "github" {
     "attribute.actor"      = "assertion.actor"
     "attribute.repository" = "assertion.repository"
   }
+  attribute_condition = "assertion.repository == '${var.github_repository}'"
   oidc {
     issuer_uri = "https://token.actions.githubusercontent.com"
   }

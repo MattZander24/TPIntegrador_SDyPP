@@ -37,14 +37,14 @@ spec:
             initialDelaySeconds: 30
             periodSeconds: 15
             timeoutSeconds: 10
-            retries: 5
+            failureThreshold: 5
           readinessProbe:
             exec:
               command: ["rabbitmq-diagnostics", "-q", "ping"]
             initialDelaySeconds: 10
             periodSeconds: 10
             timeoutSeconds: 5
-            retries: 10
+            failureThreshold: 10
           volumeMounts:
             - name: config
               mountPath: /etc/rabbitmq/rabbitmq.conf

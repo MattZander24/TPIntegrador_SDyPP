@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: worker
-          image: REGISTRY/worker:latest
+          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker:latest
           imagePullPolicy: Always
           env:
             - name: RABBITMQ_USER

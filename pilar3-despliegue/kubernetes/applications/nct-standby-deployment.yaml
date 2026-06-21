@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
         - name: nct
-          image: REGISTRY/nct:latest
+          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/nct:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
