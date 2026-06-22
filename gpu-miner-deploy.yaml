@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gpu-miner
+  namespace: g-git-push-cv
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: gpu-miner}
+  template:
+    metadata:
+      labels: {app: gpu-miner}
+    spec:
+      containers:
+      - name: gpu-miner
+        image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker-gpu:latest
+        env:
+        - name: WORKER_MODE
+          value: rabbitmq
+        - name: WORKER_ID
+          value: gpu-miner-1060
+        - name: RABBITMQ_URL
+          value: amqp://voxchain-worker:sdypp2026@35.247.243.169:5672/
+        - name: WORKER_CAPACITY
+          value: "1"
+        resources:
+          limits:
+            nvidia.com/gpu: 1

@@ -48,3 +48,6 @@ crash.log
 # Logs
 *.log
 logs/
+
+gustavo.yaml
+gpu-check.yaml

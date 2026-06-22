@@ -1,0 +1,27 @@
+# build: toolkit completo, cudart enlazado estático
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS build
+WORKDIR /src
+COPY pilar1-minero/gpu /src/gpu
+RUN mkdir -p /src/gpu/bin && \
+    nvcc -arch=sm_61 --cudart static -I/src/gpu/include \
+    -o /src/gpu/bin/05_brute_force_range /src/gpu/src/05_brute_force_range.cu
+
+# runtime: slim; el binario no necesita libcudart, el driver lo monta el runtime NVIDIA
+FROM python:3.11-slim
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app:/app/worker \
+    LOG_DIR=/var/log/voxchain \
+    MINER_CPU_SCRIPT=/app/pilar1-minero/cpu/src/brute_force.py \
+    MINER_GPU_BIN=/app/pilar1-minero/gpu/bin/05_brute_force_range \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+WORKDIR /app
+COPY pilar2-distribuido/worker/requirements.txt /app/worker/requirements.txt
+RUN pip install --no-cache-dir -r /app/worker/requirements.txt
+COPY pilar2-distribuido/common /app/common
+COPY pilar2-distribuido/worker /app/worker
+COPY pilar1-minero/cpu /app/pilar1-minero/cpu
+COPY --from=build /src/gpu/bin/05_brute_force_range /app/pilar1-minero/gpu/bin/05_brute_force_range
+RUN mkdir -p /var/log/voxchain
+CMD ["python", "/app/worker/main.py"]
