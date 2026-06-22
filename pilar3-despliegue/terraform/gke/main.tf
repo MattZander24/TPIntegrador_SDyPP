@@ -320,12 +320,10 @@ resource "helm_release" "kube_prometheus_stack" {
     grafana = {
       adminPassword = "voxchain"
       ingress = {
-        enabled = true
-        className = "gce"
-        annotations = {
-          "kubernetes.io/ingress.class" = "gce"
-        }
-        hosts = ["grafana.voxchain.local"]
+        enabled = false
+      }
+      extraEnvVars = {
+        GF_SERVER_ROOT_URL = "https://grafana.voxchain.__INGRESS_IP__.sslip.io"
       }
       persistence = {
         enabled = true
@@ -345,7 +343,41 @@ resource "helm_release" "kube_prometheus_stack" {
         }
       }
     }
-  })]
+  }]
+
+  depends_on = [google_container_cluster.cluster]
+}
+
+# ---- nginx-ingress controller (reemplaza GCE Ingress) ----
+resource "helm_release" "ingress_nginx" {
+  name       = "ingress-nginx"
+  repository = "https://kubernetes.github.io/ingress-nginx"
+  chart      = "ingress-nginx"
+  version    = "4.11.0"
+  namespace  = "ingress-nginx"
+  create_namespace = true
+
+  set {
+    name  = "controller.service.type"
+    value = "LoadBalancer"
+  }
+
+  depends_on = [google_container_cluster.cluster]
+}
+
+# ---- cert-manager (Let's Encrypt) ----
+resource "helm_release" "cert_manager" {
+  name       = "cert-manager"
+  repository = "https://charts.jetstack.io"
+  chart      = "cert-manager"
+  version    = "v1.16.0"
+  namespace  = "cert-manager"
+  create_namespace = true
+
+  set {
+    name  = "installCRDs"
+    value = "true"
+  }
 
   depends_on = [google_container_cluster.cluster]
 }

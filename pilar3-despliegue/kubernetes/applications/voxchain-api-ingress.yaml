@@ -1,18 +1,3 @@
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: voxchain-api
-  namespace: voxchain
-  annotations:
-    kubernetes.io/ingress.class: gce
-spec:
-  rules:
-    - http:
-        paths:
-          - path: /api/*
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: voxchain-api
-                port:
-                  number: 8000
+# DEPRECATED: Replaced by voxchain-ingress.yaml (unified with frontend, nginx + TLS).
+# Delete this file after confirming voxchain-ingress.yaml works.
+# Old GCE Ingress kept for reference only — do NOT apply.
