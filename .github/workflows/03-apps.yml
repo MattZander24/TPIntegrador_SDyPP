@@ -5,11 +5,9 @@ on:
     paths:
       - "pilar2-distribuido/common/**"
       - "pilar2-distribuido/nct-coordinator/**"
-      - "pilar2-distribuido/transaction-pool/**"
       - "pilar2-distribuido/voxchain_api/**"
       - "pilar2-distribuido/voxchain-frontend/**"
       - "pilar2-distribuido/worker/**"
-      - "pilar2-distribuido/pool-coordinator/**"
   workflow_dispatch:
 
 env:
@@ -35,13 +33,6 @@ jobs:
             deploy: true
             kind: deployment
             k8s_name: nct-primary
-          - name: transaction-pool
-            container_name: trp
-            dockerfile: pilar2-distribuido/transaction-pool/Dockerfile
-            context: .
-            deploy: true
-            kind: deployment
-            k8s_name: transaction-pool
           - name: worker
             container_name: worker
             dockerfile: pilar2-distribuido/worker/Dockerfile
@@ -55,12 +46,6 @@ jobs:
             deploy: true
             kind: deployment
             k8s_name: voxchain-api
-          - name: pool-coordinator
-            container_name: pool-coordinator
-            dockerfile: pilar2-distribuido/pool-coordinator/Dockerfile
-            context: .
-            deploy: false
-            kind: none
           - name: voxchain-frontend
             container_name: frontend
             dockerfile: pilar2-distribuido/voxchain-frontend/Dockerfile

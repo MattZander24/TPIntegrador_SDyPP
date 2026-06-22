@@ -1,19 +1,20 @@
-"""Pool Coordinator: consume tareas del TrP y las distribuye a miners conectados.
+"""Pool Coordinator embebido: consume desafíos del NCT y los fragmenta.
 
 Un pool es una organización que agrega mineros voluntarios. Desde la perspectiva
-del NCT/TrP es indistinguible de un worker standalone. Internamente subdivide
-el rango de nonces recibido entre sus miners registrados vía HTTP.
+del NCT es indistinguible de un worker standalone. Internamente subdivide
+el espacio de nonces entre sus miners registrados (HTTP) y su propio auto-miner.
 """
 
 from __future__ import annotations
 
-import json
 import logging
+import os
+import threading
 import time
+from collections import deque
 from threading import Lock
 
 from common.blockchain.challenge import prefix_for_zeros
-from common.messaging.base import QUEUE_TAREAS, QUEUE_KEEPALIVE
 from common.metrics import (
     pool_is_leader,
     pool_miners_registered,
@@ -29,20 +30,35 @@ log = logging.getLogger("voxchain.pool")
 KEEPALIVE_TTL = 15.0
 
 
+def fragment_range(start: int, end: int, fragment_size: int) -> list[tuple[int, int]]:
+    if fragment_size <= 0:
+        raise ValueError("fragment_size debe ser positivo")
+    if end <= start:
+        return []
+    chunks = []
+    cur = start
+    while cur < end:
+        chunks.append((cur, min(cur + fragment_size, end)))
+        cur += fragment_size
+    return chunks
+
+
 class PoolCoordinator:
-    def __init__(self, messaging, *, pool_id: str, redis, capacity: int = 1,
-                 clock=time.time, keepalive_interval: float = 5.0,
+    def __init__(self, messaging, *, pool_id: str, redis, mine,
+                 capacity: int = 1, clock=time.time,
+                 keepalive_interval: float = 5.0,
                  lease_ttl: int = 10, lease_key: str = "pool:leader"):
         self.m = messaging
         self.pool_id = pool_id
         self.redis = redis
         self.capacity = capacity
+        self.mine = mine
         self.now = clock
         self.keepalive_interval = keepalive_interval
         self.lease_ttl = lease_ttl
         self.lease_key = lease_key
         self._miners: dict[str, dict] = {}
-        self._tasks: list[dict] = []
+        self._pending_fragments: deque[dict] = deque()
         self._lock = Lock()
         self._solved: set[str] = set()
         self._voting_policy = {"decision": "accept"}
@@ -51,10 +67,14 @@ class PoolCoordinator:
         self.is_leader = False
         self._miner_counter = 0
         self._next_miner_idx = 0
+        self._running = False
+        self._auto_miner_thread: threading.Thread | None = None
+        self.nonce_space = int(os.getenv("NONCE_SPACE", "50000000"))
+        self.fragment_size = int(os.getenv("FRAGMENT_SIZE", "1000000"))
         pool_is_leader.set(0)
 
     def wire(self) -> None:
-        self.m.on_task(self.handle_task)
+        self.m.on_challenge(self.handle_challenge)
 
     def try_acquire_leadership(self) -> bool:
         acquired = self.redis.set(self.lease_key, self.pool_id,
@@ -63,7 +83,6 @@ class PoolCoordinator:
             self.is_leader = True
             pool_is_leader.set(1)
             log.info("pool coordinator %s adquirió liderazgo", self.pool_id)
-            self._subscribe_work_queues()
         return bool(acquired)
 
     def renew_leadership(self) -> bool:
@@ -71,21 +90,14 @@ class PoolCoordinator:
         pipe.get(self.lease_key)
         pipe.pttl(self.lease_key)
         current, ttl = pipe.execute()
-        if current == self.pool_id.encode() if isinstance(current, str) else current:
+        if current == (self.pool_id.encode() if isinstance(current, str) else current):
             self.redis.setex(self.lease_key, self.lease_ttl, self.pool_id)
             return True
         self.is_leader = False
         pool_is_leader.set(0)
         pool_miners_registered.set(0)
-        self._unsubscribe_work_queues()
         log.warning("pool coordinator %s perdió liderazgo", self.pool_id)
         return False
-
-    def _subscribe_work_queues(self) -> None:
-        self.m.on_task(self.handle_task)
-
-    def _unsubscribe_work_queues(self) -> None:
-        self.m.unsubscribe(QUEUE_TAREAS)
 
     def register_miner(self, capacity: int = 1, has_gpu: bool = False) -> str:
         with self._lock:
@@ -127,33 +139,44 @@ class PoolCoordinator:
         with self._lock:
             if miner_id not in self._miners:
                 return None
-            if not self._tasks:
+            if not self._pending_fragments:
                 return None
-            task = self._tasks[0]
             fresh = self._fresh_miners()
-            idx = self._next_miner_idx % len(fresh) if fresh else 0
+            if not fresh:
+                return None
+            idx = self._next_miner_idx % len(fresh)
             self._next_miner_idx += 1
+            fragment = self._pending_fragments[0]
+            space = fragment["range_max"] - fragment["range_min"]
             total = len(fresh)
-            if total == 0:
+            chunk = max(1, space // total)
+            rmin = fragment["range_min"] + idx * chunk
+            rmax = min(fragment["range_min"] + (idx + 1) * chunk, fragment["range_max"])
+            if rmin >= fragment["range_max"]:
                 return None
-            task = self._tasks[0]
-            space = int(task["range_max"]) - int(task["range_min"])
-            chunk = max(1, space // max(total, 1))
-            rmin = int(task["range_min"]) + idx * chunk
-            rmax = min(int(task["range_min"]) + (idx + 1) * chunk, int(task["range_max"]))
-            if rmin >= int(task["range_max"]):
-                return None
+            self._pending_fragments.popleft()
+            for _ in range(idx):
+                dup = fragment.copy()
+                dup["range_min"] = rmin
+                dup["range_max"] = rmax
+                self._pending_fragments.appendleft(dup)
             self._miners[miner_id]["busy"] = True
             pool_work_distributed_total.inc()
             return {
-                "voting_window_id": task["voting_window_id"],
-                "law_id": task.get("law_id"),
-                "action": task.get("action"),
-                "partial_hash_base": task["partial_hash_base"],
-                "n_zeros_required": task.get("n_zeros_required"),
+                "voting_window_id": fragment["voting_window_id"],
+                "law_id": fragment.get("law_id"),
+                "action": fragment.get("action"),
+                "partial_hash_base": fragment["partial_hash_base"],
+                "n_zeros_required": fragment.get("n_zeros_required"),
                 "range_min": rmin,
                 "range_max": rmax,
             }
+
+    def _get_auto_miner_fragment(self) -> dict | None:
+        with self._lock:
+            if not self._pending_fragments:
+                return None
+            return self._pending_fragments.popleft()
 
     def submit_result(self, miner_id: str, result: dict) -> bool:
         with self._lock:
@@ -184,32 +207,67 @@ class PoolCoordinator:
         self._voting_policy = policy
         log.info("pool %s política de voto: %s", self.pool_id, policy)
 
-    def _check_voting_policy(self, task: dict) -> bool:
+    def _check_voting_policy(self, challenge: dict) -> bool:
         policy = self._voting_policy
         if policy["decision"] == "accept":
             return True
-        if policy.get("action") and task.get("action") == policy["action"]:
+        if policy.get("action") and challenge.get("action") == policy["action"]:
             return False
-        if policy.get("law_id") and task.get("law_id") == policy["law_id"]:
+        if policy.get("law_id") and challenge.get("law_id") == policy["law_id"]:
             return False
         if "action" not in policy and "law_id" not in policy:
             return False
         return True
 
-    def handle_task(self, task: dict) -> None:
-        wid = task.get("voting_window_id")
-        if wid in self._solved:
+    def handle_challenge(self, challenge: dict) -> None:
+        if not self._running:
             return
-        if not self._check_voting_policy(task):
+        wid = challenge.get("voting_window_id")
+        if not wid or wid in self._solved:
+            return
+        if not self._check_voting_policy(challenge):
             log.info("pool %s rechaza ventana %s por política de voto",
                      self.pool_id, wid)
             return
         worker_tasks_received_total.inc()
         worker_busy.set(1)
-        log.info("pool %s recibió tarea ventana %s rango [%d, %d)",
-                 self.pool_id, wid, int(task["range_min"]), int(task["range_max"]))
+        chunks = fragment_range(0, self.nonce_space, self.fragment_size)
+        log.info("pool %s desafío %s fragmentado en %d tareas",
+                 self.pool_id, wid, len(chunks))
         with self._lock:
-            self._tasks.append(task)
+            for rmin, rmax in chunks:
+                self._pending_fragments.append({
+                    "voting_window_id": wid,
+                    "law_id": challenge.get("law_id"),
+                    "action": challenge.get("action"),
+                    "partial_hash_base": challenge["partial_hash_base"],
+                    "n_zeros_required": challenge.get("n_zeros_required"),
+                    "range_min": rmin,
+                    "range_max": rmax,
+                })
+
+    def _auto_mine_loop(self) -> None:
+        while self._running:
+            fragment = self._get_auto_miner_fragment()
+            if fragment:
+                wid = fragment["voting_window_id"]
+                base = fragment["partial_hash_base"]
+                prefix = prefix_for_zeros(int(fragment.get("n_zeros_required", 4)))
+                rmin = fragment["range_min"]
+                rmax = fragment["range_max"]
+                log.info("pool %s auto-minando ventana %s rango [%d, %d)",
+                         self.pool_id, wid, rmin, rmax)
+                nonce, hash_hex = self.mine(base, prefix, rmin, rmax)
+                if nonce is not None:
+                    self.submit_result(self.pool_id, {
+                        "voting_window_id": wid,
+                        "nonce": nonce,
+                        "block_hash_candidato": hash_hex,
+                    })
+                    log.info("pool %s auto-miner nonce %d para ventana %s",
+                             self.pool_id, nonce, wid)
+            else:
+                time.sleep(0.5)
 
     def emit_keepalive(self) -> None:
         fresh = self._fresh_miners()
@@ -223,6 +281,17 @@ class PoolCoordinator:
         })
         log.debug("pool %s keepalive: %d miners, capacity %d, gpu=%s",
                   self.pool_id, len(fresh), total_capacity, has_gpu)
+
+    def start(self) -> None:
+        self._running = True
+        self._auto_miner_thread = threading.Thread(target=self._auto_mine_loop, daemon=True)
+        self._auto_miner_thread.start()
+
+    def stop(self) -> None:
+        self._running = False
+        if self._auto_miner_thread:
+            self._auto_miner_thread.join(timeout=5)
+            self._auto_miner_thread = None
 
     def tick(self) -> None:
         now = self.now()

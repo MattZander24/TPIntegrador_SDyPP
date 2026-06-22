@@ -10,7 +10,7 @@ API Gateway para VoxChain, implementada con FastAPI. Expone endpoints REST para 
 - Publica propuestas de leyes a RabbitMQ para consumo del NCT.
 - Implementa SSE (`/api/events`) para broadcasting de cambios en tiempo real (bloques, ventanas, leyes).
 - Expone métricas Prometheus en `/metrics` para monitoreo.
-- Health check agregado que verifica NCT, TrP, Redis y estado interno.
+- Health check agregado que verifica NCT, Redis y estado interno.
 
 ## Estructura
 
@@ -34,12 +34,12 @@ docker compose up --build voxchain-api
 
 # Directo (requiere Redis y RabbitMQ accesibles)
 REDIS_URL=redis://localhost:6379/0 RABBITMQ_URL=amqp://guest:guest@localhost:5672/ \
-NCT_HEALTH_URL=http://localhost:8080/health TRP_HEALTH_URL=http://localhost:8082/health \
+NCT_HEALTH_URL=http://localhost:8080/health \
 PORT=8000 python -m voxchain_api.main
 ```
 
 Root: `GET /` → `{"service":"voxchain-api","version":"1.0.0","status":"running"}`.
-Health: `GET /api/health` → `{"api":"ok","nct":"ok","trp":"ok","redis":"ok"}`.
+Health: `GET /api/health` → `{"api":"ok","nct":"ok","redis":"ok"}`.
 Metrics: `GET /metrics` → Métricas Prometheus (Prometheus text format).
 
 ## API REST
@@ -74,7 +74,7 @@ El endpoint `/api/events` emite eventos en tiempo real cuando ocurren cambios en
 | `REDIS_URL` | `redis://redis:6379/0` | URL de conexión a Redis |
 | `RABBITMQ_URL` | `amqp://guest:guest@rabbitmq:5672/` | URL de conexión a RabbitMQ |
 | `NCT_HEALTH_URL` | `http://coordinator:8080/health` | URL de health del NCT |
-| `TRP_HEALTH_URL` | `http://transaction-pool:8080/health` | URL de health del TrP |
+| `TRP_HEALTH_URL` | (eliminado) | El TrP fue eliminado; la fragmentación la hace cada Pool Coordinator internamente |
 | `PORT` | `8000` | Puerto del servidor HTTP |
 
 ## Decisiones de diseño

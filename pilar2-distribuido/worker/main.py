@@ -1,9 +1,9 @@
 """Punto de entrada del worker minero.
 
 Modos:
-  - ``rabbitmq`` (default): consume rangos del TrP vía RabbitMQ.
   - ``standalone``: se suscribe al desafío activo del NCT, mina espacio completo.
-  - ``pool-miner``: se conecta al Pool Coordinator vía HTTP.
+  - ``pool-coordinator``: fragmenta espacio de nonces, acepta workers HTTP, auto-mina.
+  - ``pool-worker``: se conecta a un Pool Coordinator vía HTTP.
 
 Hot-switch entre modos vía POST /switch-mode en puerto admin (9090).
 """
@@ -19,9 +19,11 @@ from common import config
 from common.health import start_health_server
 from common.logging_setup import setup_logging
 from common.messaging import build_rabbitmq
+from common.redis import create_redis
 from worker_pkg.admin_server import start_admin_server
 from worker_pkg.miner import _gpu_available, run_miner
-from worker_pkg.pool_miner import PoolMiner
+from worker_pkg.pool_worker import PoolWorker
+from worker_pkg.pool_coordinator import PoolCoordinator
 from worker_pkg.standalone_worker import StandaloneWorker
 from worker_pkg.worker import Worker
 import logging
@@ -39,6 +41,7 @@ class WorkerManager:
         self._thread = None
         self._mode = "idle"
         self._pool_url = ""
+        self._pool_httpd = None
         self._stop_event = threading.Event()
 
     # -- API pública para admin_server --
@@ -52,18 +55,18 @@ class WorkerManager:
         }
 
     def switch_mode(self, target: str, pool_url: str = "") -> dict:
-        if target not in ("pool-miner", "standalone", "rabbitmq"):
+        if target not in ("pool-worker", "standalone", "pool-coordinator"):
             raise ValueError(f"modo desconocido: {target}")
-        if target == "pool-miner" and not pool_url:
-            raise ValueError("pool_url requerido para modo pool-miner")
+        if target == "pool-worker" and not pool_url:
+            raise ValueError("pool_url requerido para modo pool-worker")
         log.info("switching mode: %s → %s", self._mode, target)
         self._stop_current()
-        if target == "pool-miner":
-            self._start_pool_miner(pool_url)
+        if target == "pool-worker":
+            self._start_pool_worker(pool_url)
         elif target == "standalone":
             self._start_standalone()
-        elif target == "rabbitmq":
-            self._start_rabbitmq()
+        elif target == "pool-coordinator":
+            self._start_pool_coordinator()
         log.info("modo activo: %s", self._mode)
         return {"ok": True, "mode": self._mode, "pool_url": self._pool_url}
 
@@ -83,6 +86,9 @@ class WorkerManager:
         if self._thread:
             self._thread.join(timeout=10)
             self._thread = None
+        if self._pool_httpd:
+            self._pool_httpd.shutdown()
+            self._pool_httpd = None
         if self._messaging:
             self._messaging.close()
             self._messaging = None
@@ -102,18 +108,18 @@ class WorkerManager:
             if not self._stop_event.is_set():
                 raise
 
-    def _start_pool_miner(self, pool_url: str) -> None:
-        self._mode = "pool-miner"
+    def _start_pool_worker(self, pool_url: str) -> None:
+        self._mode = "pool-worker"
         self._pool_url = pool_url
-        miner = PoolMiner(
+        pw = PoolWorker(
             pool_url,
             miner_id=self.worker_id,
             capacity=config.get_int("WORKER_CAPACITY", 1),
             has_gpu=self.has_gpu,
             mine=run_miner,
         )
-        self._worker = miner
-        self._thread = threading.Thread(target=miner.run, daemon=True)
+        self._worker = pw
+        self._thread = threading.Thread(target=pw.run, daemon=True)
         self._thread.start()
 
     def _start_standalone(self) -> None:
@@ -131,22 +137,37 @@ class WorkerManager:
         )
         self._thread.start()
 
-    def _start_rabbitmq(self) -> None:
-        self._mode = "rabbitmq"
+    def _start_pool_coordinator(self) -> None:
+        self._mode = "pool-coordinator"
         m = self._ensure_messaging()
-        w = Worker(
+        redis = create_redis(config.REDIS_URL)
+        pc = PoolCoordinator(
             m,
-            worker_id=self.worker_id,
+            pool_id=self.worker_id,
+            redis=redis,
             mine=run_miner,
             capacity=config.get_int("WORKER_CAPACITY", 1),
-            has_gpu=self.has_gpu,
         )
-        w.wire()
-        self._worker = w
+        pc.wire()
+        pc.start()
+        self._worker = pc
+
+        from worker_pkg.pool_coordinator.server import start_pool_http_server
+        self._pool_httpd = start_pool_http_server(
+            pc, port=config.get_int("POOL_HTTP_PORT", 9001)
+        )
+        pool_http_thread = threading.Thread(
+            target=self._pool_httpd.serve_forever, daemon=True
+        )
+        pool_http_thread.start()
+
         self._thread = threading.Thread(
             target=self._run_messaging_loop, daemon=True
         )
         self._thread.start()
+
+        log.info("pool-coordinator %s iniciado en puerto %d",
+                 self.worker_id, config.get_int("POOL_HTTP_PORT", 9001))
 
 
 def main() -> None:
@@ -154,7 +175,7 @@ def main() -> None:
     log = setup_logging("worker")
     worker_id = os.getenv("WORKER_ID", f"worker-{socket.gethostname()}")
     has_gpu = _gpu_available(os.getenv("MINER_GPU_BIN", ""))
-    mode = os.getenv("WORKER_MODE", "rabbitmq")
+    mode = os.getenv("WORKER_MODE", "standalone")
     pool_url = os.getenv("POOL_COORDINATOR_URL", "")
     log.info("iniciando %s modo=%s (gpu=%s)", worker_id, mode, has_gpu)
 

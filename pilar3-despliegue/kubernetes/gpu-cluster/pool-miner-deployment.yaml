@@ -23,7 +23,7 @@ spec:
               name: health
           env:
             - name: WORKER_MODE
-              value: "pool-miner"
+              value: "pool-worker"
             - name: POOL_COORDINATOR_URL
               value: "http://pool-coordinator:9001"
             - name: WORKER_CAPACITY

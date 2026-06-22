@@ -50,6 +50,7 @@ class AdminHTTPHandler(BaseHTTPRequestHandler):
         if parsed.path == "/switch-mode":
             target = payload.get("target", "")
             pool_url = payload.get("pool_url", "")
+            rejected_actions = payload.get("rejected_actions", "")
             try:
                 result = self.manager.switch_mode(target, pool_url)
                 return self._send_json(result)

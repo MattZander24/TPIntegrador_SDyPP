@@ -33,18 +33,8 @@ async def get_health(redis: RedisReader = Depends(get_redis_reader)):
     except Exception:
         nct_status = "error"
 
-    # Check TrP
-    trp_status = "ok"
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(config.TRP_HEALTH_URL, timeout=2.0)
-            trp_status = "ok" if response.status_code == 200 else "error"
-    except Exception:
-        trp_status = "error"
-
     return HealthResponse(
         api="ok",
         nct=nct_status,
-        trp=trp_status,
         redis=redis_status,
     )

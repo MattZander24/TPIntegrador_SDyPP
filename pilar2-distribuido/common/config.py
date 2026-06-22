@@ -35,7 +35,7 @@ COOLDOWN_WINDOWS_NEW = get_int("COOLDOWN_WINDOWS_NEW", N_ZEROS)
 # Reproposición idéntica: estrictamente mayor que el normal.
 COOLDOWN_WINDOWS_REPROPOSED = get_int("COOLDOWN_WINDOWS_REPROPOSED", 2 * N_ZEROS)
 
-# Fragmentación del espacio de nonces (TrP). Barrido por Pilar 3 (1%–50%).
+# Fragmentación del espacio de nonces (Pool Coordinator / Standalone).
 NONCE_SPACE = get_int("NONCE_SPACE", 50_000_000)
 FRAGMENT_SIZE = get_int("FRAGMENT_SIZE", 1_000_000)
 
@@ -44,10 +44,7 @@ RABBITMQ_TLS_CA_PATH = get("RABBITMQ_TLS_CA_PATH", "")
 
 # Health endpoints
 # Pool
-POOL_ID = get("POOL_ID", "pool-default")
-POOL_CAPACITY = get_int("POOL_CAPACITY", 1)
 POOL_HTTP_PORT = get_int("POOL_HTTP_PORT", 9001)
-POOL_COORDINATOR_URL = get("POOL_COORDINATOR_URL", "http://pool-coordinator:9001")
 
 HEALTH_PORT = get_int("HEALTH_PORT", 8080)
 

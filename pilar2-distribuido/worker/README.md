@@ -9,24 +9,25 @@ El worker soporta **tres modos** intercambiables en caliente vía hot-switch:
 
 | Modo | `WORKER_MODE` | Cómo recibe trabajo | Rango de nonces | A quién reporta |
 |------|---------------|---------------------|-----------------|-----------------|
-| RabbitMQ | `rabbitmq` (default) | Cola `tareas_trp` del TrP | Fragmento del TrP | NCT (`respuesta_nonce`) |
-| Pool-miner | `pool-miner` | HTTP al Pool Coordinator | Fragmento del pool | Pool Coordinator |
-| Standalone | `standalone` | Topic `desafio_activo` del NCT | Completo `[0, NONCE_SPACE)` | NCT (`respuesta_nonce`) |
-
-### RabbitMQ mode
-Consume un rango `[range_min, range_max)` desde `tareas_trp` que el TrP fragmentó.
-Emite keep-alives al TrP. Comportamiento original del worker.
-
-### Pool-miner mode
-Se conecta vía HTTP al Pool Coordinator. Delega la **decisión de voto** al dueño
-del pool: el pool coordinator aplica su `voting_policy` y solo asigna trabajo si
-la ley es aceptada. El minero no elige qué minar.
+| Standalone | `standalone` (default) | Topic `desafio_activo` del NCT | Completo `[0, NONCE_SPACE)` | NCT (`respuesta_nonce`) |
+| Pool-coordinator | `pool-coordinator` | Topic `desafio_activo` del NCT (fragmenta internamente) | Fragmenta y reparte + auto-mina | NCT (`respuesta_nonce`) |
+| Pool-worker | `pool-worker` | HTTP al Pool Coordinator | Fragmento del coordinator | Pool Coordinator |
 
 ### Standalone mode
-Se suscribe directo al exchange `desafio_activo` del NCT. No depende del TrP ni
-de ningún pool. Mina el **espacio completo de nonces** (sin fragmentación) y
-publica el resultado directamente al NCT. Filtra leyes según
-`STANDALONE_REJECTED_ACTIONS` — el usuario decide qué leyes votar.
+Se suscribe directo al exchange `desafio_activo` del NCT. Mina el **espacio
+completo de nonces** y publica el resultado directamente al NCT. Filtra leyes
+según `STANDALONE_REJECTED_ACTIONS` — el usuario decide qué leyes votar.
+
+### Pool-coordinator mode
+El worker actúa como líder de un pool: se suscribe al `desafio_activo`, aplica
+la `voting_policy`, **fragmenta el espacio de nonces**, distribuye fragmentos a
+workers conectados vía HTTP, y también **auto-mina** sus propios fragmentos.
+Usa Redis para liderazgo (HA del pool coordinator).
+
+### Pool-worker mode
+Se conecta vía HTTP a un Pool Coordinator. Delega la **decisión de voto** al
+dueño del pool: el coordinator aplica su `voting_policy` y solo asigna trabajo
+si la ley es aceptada. El minero no elige qué minar. No usa RabbitMQ.
 
 ## Votación y autonomía
 
@@ -35,8 +36,8 @@ publica el resultado directamente al NCT. Filtra leyes según
   distribuye trabajo para esa ley y los mineros nunca la procesan.
 - Los mineros en modo **standalone** deciden por sí mismos qué leyes minar
   mediante la variable `STANDALONE_REJECTED_ACTIONS`.
-- En cualquier momento un minero puede **abandonar su pool** y pasar a standalone
-  (o viceversa) mediante hot-switch sin reiniciar el contenedor.
+- En cualquier momento un minero puede cambiar de modo mediante hot-switch
+  sin reiniciar el contenedor.
 
 ## Hot-switch (cambio de modo en caliente)
 
@@ -44,17 +45,17 @@ El worker expone un servidor HTTP de administración en el puerto `9090`
 (variable `ADMIN_PORT`).
 
 ```bash
-# De pool-miner a standalone
+# De pool-worker a standalone
 curl -X POST http://worker:9090/switch-mode \
   -d '{"target":"standalone"}'
 
-# De standalone a pool-miner
+# De standalone a pool-worker
 curl -X POST http://worker:9090/switch-mode \
-  -d '{"target":"pool-miner","pool_url":"http://nuevo-pool:9001"}'
+  -d '{"target":"pool-worker","pool_url":"http://pool-coordinator:9001"}'
 
-# De standalone/ pool-miner a rabbitmq
+# De standalone a pool-coordinator
 curl -X POST http://worker:9090/switch-mode \
-  -d '{"target":"rabbitmq"}'
+  -d '{"target":"pool-coordinator"}'
 
 # Ver modo actual
 curl http://worker:9090/status
@@ -62,29 +63,32 @@ curl http://worker:9090/status
 
 Al cambiar de modo:
 1. El worker actual se detiene limpiamente (señal `stop()`)
-2. La conexión RabbitMQ se cierra y se reabre si el nuevo modo la necesita
-3. Se inicia el nuevo worker en un thread separado
-4. El health endpoint refleja el modo activo
+2. Se inicia el nuevo modo en un thread separado
+3. El health endpoint refleja el modo activo
 
 ## Estructura
 
 | Archivo | Contenido |
 |---------|-----------|
 | `main.py` | Punto de entrada, `WorkerManager` con hot-switch, health y admin server |
-| `worker_pkg/worker.py` | Worker RabbitMQ: consume `tareas_trp`, mina rangos, publica nonce |
 | `worker_pkg/standalone_worker.py` | Worker standalone: consume `desafio_activo`, mina espacio completo |
-| `worker_pkg/pool_miner.py` | Worker pool-miner: HTTP al Pool Coordinator |
+| `worker_pkg/pool_worker.py` | Worker de pool: HTTP al Pool Coordinator |
+| `worker_pkg/pool_coordinator/` | Pool Coordinator embebido (fragmentación, auto-miner, HTTP server) |
+| `worker_pkg/pool_coordinator/coordinator.py` | Lógica del pool: fragmentación, política de voto, auto-miner |
+| `worker_pkg/pool_coordinator/server.py` | Servidor HTTP para workers del pool |
 | `worker_pkg/miner.py` | Puente al minero de Pilar 1 (GPU/CPU) y parseo de salida |
 | `worker_pkg/admin_server.py` | Servidor HTTP para hot-switch (`POST /switch-mode`, `GET /status`) |
 
 ## Ejecución
 
 ```bash
-docker compose up --build worker   # levanta 2 réplicas en modo rabbitmq
+docker compose up --build worker   # levanta 2 réplicas en modo standalone
 
-# Especificar modo
-WORKER_MODE=standalone docker compose up --build worker
-WORKER_MODE=pool-miner POOL_COORDINATOR_URL=http://pool:9001 docker compose up --build worker
+# Modo pool-coordinator (requiere Redis)
+docker compose up --build worker-pool-coordinator
+
+# Modo pool-worker (conectarse a un pool coordinator)
+WORKER_MODE=pool-worker POOL_COORDINATOR_URL=http://pool:9001 docker compose up --build worker
 ```
 
 Health: `GET :8080/health` → `{"worker_id":"...", "mode":"standalone", "status":"ok"}`.
@@ -97,26 +101,33 @@ Health: `GET :8080/health` → `{"worker_id":"...", "mode":"standalone", "status
 | `MINER_CPU_SCRIPT` | `/app/pilar1-minero/cpu/src/brute_force.py` | Minero CPU (fallback). |
 | `WORKER_ID` | `worker-<hostname>` | Identidad del worker (gana el bloque). |
 | `WORKER_CAPACITY` | 1 | Capacidad reportada en el keep-alive. |
-| `WORKER_MODE` | `rabbitmq` | Modo inicial: `rabbitmq`, `pool-miner`, o `standalone`. |
-| `POOL_COORDINATOR_URL` | `http://pool-coordinator:9001` | URL del Pool Coordinator (modo pool-miner). |
+| `WORKER_MODE` | `standalone` | Modo inicial: `standalone`, `pool-coordinator`, o `pool-worker`. |
+| `POOL_COORDINATOR_URL` | `http://pool-coordinator:9001` | URL del Pool Coordinator (modo pool-worker). |
+| `POOL_HTTP_PORT` | `9001` | Puerto HTTP del pool coordinator embebido (modo pool-coordinator). |
+| `NONCE_SPACE` | `50000000` | Tamaño total del espacio de nonces a fragmentar (pool-coordinator/standalone). |
+| `FRAGMENT_SIZE` | `1000000` | Tamaño de cada fragmento (modo pool-coordinator). |
 | `STANDALONE_NONCE_SPACE` | `50000000` | Tamaño del espacio de nonces (modo standalone). |
 | `STANDALONE_REJECTED_ACTIONS` | (vacío) | Acciones a rechazar en modo standalone, separadas por coma. Ej: `derogacion` |
 | `ADMIN_PORT` | `9090` | Puerto del servidor de administración (hot-switch). |
 | `RABBITMQ_URL` | `amqp://guest:guest@rabbitmq:5672/` | Conexión RabbitMQ. |
 | `HEALTH_PORT` | `8080` | Puerto del health endpoint. |
+| `REDIS_URL` | `redis://redis:6379/0` | Conexión Redis (modo pool-coordinator). |
 
 ## Decisiones de diseño
 
 - **El minero es un subproceso, no una librería**: respeta la frontera con Pilar 1
   y permite usar el binario CUDA tal cual. La salida (`Nonce = N`) es común a GPU y
   CPU, así que el parseo es uno solo.
-- **Sin Redis en el worker**: el worker es stateless respecto del estado de la
-  cadena; la deduplicación de soluciones tardías la hace el NCT.
-- **Hot-switch vía threads**: el loop de consumo RabbitMQ corre en un thread para
-  poder cerrarlo limpiamente al cambiar de modo sin reiniciar el proceso.
-- **Pool-miner delega voto**: el minero dentro de un pool no elige qué leyes minar,
+- **Sin Redis en el worker standalone**: el worker standalone es stateless respecto
+  del estado de la cadena; la deduplicación de soluciones tardías la hace el NCT.
+- **Hot-switch vía threads**: cada modo corre en un thread para poder detenerlo
+  limpiamente al cambiar sin reiniciar el proceso.
+- **Pool-coordinator embebido**: ya no hay un servicio `pool-coordinator` separado
+  ni un `transaction-pool`. Cada nodo que quiere ser pool leader ejecuta el
+  coordinator dentro del worker. La fragmentación del espacio de nonces es interna.
+- **Pool-worker delega voto**: el minero dentro de un pool no elige qué leyes minar,
   esa decisión la centraliza el pool coordinator según la política del dueño.
-- **Standalone mina todo el espacio**: sin TrP ni pool, el worker se suscribe al
-  desafío del NCT y barre `[0, STANDALONE_NONCE_SPACE)` compitiendo directamente
-  contra el resto de la red.
+- **Standalone mina todo el espacio**: sin pool, el worker se suscribe al desafío
+  del NCT y barre `[0, STANDALONE_NONCE_SPACE)` compitiendo directamente contra
+  el resto de la red.
 - **En contenedor sin GPU**, el fallback CPU es automático (el binario CUDA no existe).
