@@ -183,12 +183,18 @@ class RabbitMQMessaging(Messaging):
         self._consuming = True
         self._bind_consumers()
         log.info("consumiendo (%s)", ", ".join(self._consumer_tags) or "sin handlers")
-        while True:
-            self._conn.process_data_events(time_limit=tick_interval)
+        while self._consuming:
+            try:
+                self._conn.process_data_events(time_limit=tick_interval)
+            except Exception:
+                if not self._consuming:
+                    break
+                raise
             if tick is not None:
                 tick()
 
     def close(self) -> None:
+        self._consuming = False
         try:
             if self._conn and self._conn.is_open:
                 self._conn.close()

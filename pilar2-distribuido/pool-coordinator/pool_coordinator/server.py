@@ -42,6 +42,13 @@ class PoolHTTPHandler(BaseHTTPRequestHandler):
             ok = self.coordinator.handle_heartbeat(mid)
             return self._send_json({"ok": ok})
 
+        elif parsed.path == "/pool/policy":
+            try:
+                self.coordinator.set_voting_policy(payload)
+                return self._send_json({"ok": True})
+            except ValueError as e:
+                return self._send_json({"error": str(e)}, 400)
+
         elif parsed.path == "/work/result":
             mid = payload.get("miner_id", "")
             result = payload.get("result", {})
@@ -61,10 +68,12 @@ class PoolHTTPHandler(BaseHTTPRequestHandler):
             return self._send_json(task)
 
         elif parsed.path == "/health":
+            policy = getattr(self.coordinator, "_voting_policy", {"decision": "accept"})
             return self._send_json({
                 "pool": "ok",
                 "rabbitmq": "ok",
                 "miners": len(self.coordinator._miners) if hasattr(self.coordinator, "_miners") else 0,
+                "voting_policy": policy,
             })
 
         else:

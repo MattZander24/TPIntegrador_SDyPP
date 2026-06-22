@@ -45,6 +45,7 @@ class PoolCoordinator:
         self._tasks: list[dict] = []
         self._lock = Lock()
         self._solved: set[str] = set()
+        self._voting_policy = {"decision": "accept"}
         self._last_keepalive = 0.0
         self._last_lease_renew = 0.0
         self.is_leader = False
@@ -176,9 +177,32 @@ class PoolCoordinator:
         log.info("pool %s publicó nonce %d para ventana %s", self.pool_id, nonce, wid)
         return True
 
+    def set_voting_policy(self, policy: dict) -> None:
+        decision = policy.get("decision", "accept")
+        if decision not in ("accept", "reject"):
+            raise ValueError(f"decision inválida: {decision}")
+        self._voting_policy = policy
+        log.info("pool %s política de voto: %s", self.pool_id, policy)
+
+    def _check_voting_policy(self, task: dict) -> bool:
+        policy = self._voting_policy
+        if policy["decision"] == "accept":
+            return True
+        if policy.get("action") and task.get("action") == policy["action"]:
+            return False
+        if policy.get("law_id") and task.get("law_id") == policy["law_id"]:
+            return False
+        if "action" not in policy and "law_id" not in policy:
+            return False
+        return True
+
     def handle_task(self, task: dict) -> None:
         wid = task.get("voting_window_id")
         if wid in self._solved:
+            return
+        if not self._check_voting_policy(task):
+            log.info("pool %s rechaza ventana %s por política de voto",
+                     self.pool_id, wid)
             return
         worker_tasks_received_total.inc()
         worker_busy.set(1)

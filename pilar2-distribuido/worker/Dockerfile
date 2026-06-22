@@ -21,4 +21,6 @@ COPY pilar1-minero/cpu /app/pilar1-minero/cpu
 
 RUN mkdir -p /var/log/voxchain
 
+EXPOSE 9090
+
 CMD ["python", "/app/worker/main.py"]

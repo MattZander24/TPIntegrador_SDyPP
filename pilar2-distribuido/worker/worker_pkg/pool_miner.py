@@ -28,6 +28,15 @@ class PoolMiner:
         self.heartbeat_interval = heartbeat_interval
         self._registered = False
         self._last_hb = 0.0
+        self._running = False
+
+    def stop(self) -> None:
+        self._running = False
+
+    def join(self, coordinator_url: str) -> None:
+        self.url = coordinator_url.rstrip("/")
+        self._registered = False
+        self._running = True
 
     def _post(self, path: str, data: dict) -> dict | None:
         try:
@@ -96,13 +105,14 @@ class PoolMiner:
 
     def run(self) -> None:
         log.info("pool-miner iniciando (coordinator=%s)", self.url)
-        while not self._registered:
+        self._running = True
+        while self._running and not self._registered:
             if self.register():
                 break
             log.warning("reintentando registro en 5s...")
             time.sleep(5)
 
-        while True:
+        while self._running:
             now = self.now()
             if now - self._last_hb >= self.heartbeat_interval:
                 self._last_hb = now
