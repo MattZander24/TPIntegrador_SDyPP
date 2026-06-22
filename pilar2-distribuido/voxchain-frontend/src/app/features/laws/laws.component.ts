@@ -1,20 +1,27 @@
-import { Component, inject, OnInit, signal } from '@angular/core';
+import { Component, inject, signal, effect, untracked } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { MatCardModule } from '@angular/material/card';
 import { MatTableModule } from '@angular/material/table';
 import { MatButtonModule } from '@angular/material/button';
 import { MatTabsModule } from '@angular/material/tabs';
+import { MatIconModule } from '@angular/material/icon';
 import { ApiService } from '../../core/services/api.service';
+import { EventsService } from '../../core/services/events.service';
 import { Law } from '../../core/models/law.model';
 
 @Component({
   selector: 'app-laws',
   standalone: true,
-  imports: [CommonModule, MatCardModule, MatTableModule, MatButtonModule, MatTabsModule],
+  imports: [CommonModule, MatCardModule, MatTableModule, MatButtonModule, MatTabsModule, MatIconModule],
   template: `
     <div class="laws-container">
-      <h1>Laws</h1>
-      
+      <div class="laws-header">
+        <h1>Laws</h1>
+        <button mat-icon-button (click)="loadLaws()" title="Refresh">
+          <mat-icon>refresh</mat-icon>
+        </button>
+      </div>
+
       <mat-card>
         <mat-card-content>
           <mat-tab-group>
@@ -113,8 +120,14 @@ import { Law } from '../../core/models/law.model';
       max-width: 1400px;
       margin: 0 auto;
     }
+    .laws-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
     h1 {
       color: #e0e0e0;
+      margin: 0;
     }
     mat-card {
       background-color: #1e1e1e;
@@ -131,18 +144,24 @@ import { Law } from '../../core/models/law.model';
     }
   `]
 })
-export class LawsComponent implements OnInit {
+export class LawsComponent {
   private apiService = inject(ApiService);
+  private eventsService = inject(EventsService);
   allLaws = signal<Law[]>([]);
   pendingLaws = signal<Law[]>([]);
   promulgatedLaws = signal<Law[]>([]);
   displayedColumns: string[] = ['law_id', 'author', 'status', 'action'];
 
-  ngOnInit() {
-    this.loadLaws();
+  constructor() {
+    effect(() => {
+      // Track SSE signals so this effect re-runs on new blocks or law updates
+      this.eventsService.latestBlock();
+      this.eventsService.lawsChanged();
+      untracked(() => this.loadLaws());
+    });
   }
 
-  private loadLaws() {
+  loadLaws() {
     this.apiService.getLaws().subscribe((laws: Law[]) => {
       this.allLaws.set(laws);
       this.pendingLaws.set(laws.filter((l: Law) => l.status === 'pending_queue'));

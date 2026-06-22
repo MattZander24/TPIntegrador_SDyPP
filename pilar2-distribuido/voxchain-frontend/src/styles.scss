@@ -33,8 +33,30 @@ body {
   @include mat.icon-theme($dark-theme);
   @include mat.badge-theme($dark-theme);
   @include mat.progress-bar-theme($dark-theme);
+  @include mat.select-theme($dark-theme);
+  @include mat.option-theme($dark-theme);
+  @include mat.tabs-theme($dark-theme);
 }
 
 .mat-app-background {
   background-color: #121212;
+}
+
+// El panel del mat-select se renderiza en un CDK overlay fuera del body,
+// por eso necesita su propio background explícito.
+.mat-mdc-select-panel {
+  background-color: #2a2a2a !important;
+}
+
+.mat-mdc-option {
+  color: #e0e0e0 !important;
+
+  &:hover:not(.mdc-list-item--disabled),
+  &.mat-mdc-option-active {
+    background-color: #3a3a3a !important;
+  }
+
+  &.mdc-list-item--selected:not(.mdc-list-item--disabled) {
+    background-color: #1e3a5f !important;
+  }
 }

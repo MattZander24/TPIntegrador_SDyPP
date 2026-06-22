@@ -131,10 +131,10 @@ async def sse_polling_task(app: FastAPI):
                     )
                 prev_active_window = current_active_window
 
-            # Check for law status changes
+            # Check for new laws and law status changes
             current_laws = {law["law_id"]: law.get("status") for law in redis.get_laws()}
             for law_id, status in current_laws.items():
-                if law_id in prev_laws and prev_laws[law_id] != status:
+                if law_id not in prev_laws or prev_laws[law_id] != status:
                     await broadcast_sse_event(
                         app, "law_updated", {"law_id": law_id, "status": status}
                     )

@@ -9,6 +9,7 @@ export class EventsService {
   latestBlock = signal<Block | null>(null);
   activeWindow = signal<Window | null>(null);
   connectionStatus = signal<'connecting' | 'connected' | 'disconnected'>('disconnected');
+  lawsChanged = signal(0);
 
   private eventSource: EventSource | null = null;
   private reconnectAttempts = 0;
@@ -62,6 +63,7 @@ export class EventsService {
         try {
           const data = JSON.parse(event.data);
           console.log('Law updated:', data);
+          this.lawsChanged.update(n => n + 1);
         } catch (e) {
           console.error('Failed to parse law_updated event:', e);
         }

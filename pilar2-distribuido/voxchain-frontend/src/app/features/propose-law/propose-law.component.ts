@@ -11,6 +11,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { RouterModule } from '@angular/router';
 import { ApiService } from '../../core/services/api.service';
 import { IdentityService } from '../../core/services/identity.service';
+import { Law } from '../../core/models/law.model';
 
 @Component({
   selector: 'app-propose-law',
@@ -43,24 +44,39 @@ import { IdentityService } from '../../core/services/identity.service';
               </mat-select>
             </mat-form-field>
 
-            <mat-form-field appearance="outline" class="full-width">
-              <mat-label>Law Text</mat-label>
-              <textarea matInput [(ngModel)]="text" rows="10" placeholder="Enter the law text here..."></textarea>
-            </mat-form-field>
+            <div *ngIf="action === 'derogacion'">
+              <mat-form-field appearance="outline" class="full-width">
+                <mat-label>Law ID to Repeal</mat-label>
+                <mat-select [(ngModel)]="lawIdToRepeal" placeholder="Select a promulgated law">
+                  <mat-option *ngFor="let law of promulgatedLaws()" [value]="law.law_id">
+                    {{ law.law_id }}
+                  </mat-option>
+                </mat-select>
+                <mat-hint>Select the promulgated law you want to repeal</mat-hint>
+              </mat-form-field>
+              <p *ngIf="promulgatedLaws().length === 0" class="hint">No hay leyes promulgadas para derogar.</p>
+            </div>
 
-            <div class="file-upload">
-              <p class="hint">Or upload a text file:</p>
-              <input type="file" accept=".txt" (change)="onFileSelected($event)" />
+            <div *ngIf="action !== 'derogacion'">
+              <mat-form-field appearance="outline" class="full-width">
+                <mat-label>Law Text</mat-label>
+                <textarea matInput [(ngModel)]="text" rows="10" placeholder="Enter the law text here..."></textarea>
+              </mat-form-field>
+
+              <div class="file-upload">
+                <p class="hint">Or upload a text file:</p>
+                <input type="file" accept=".txt" (change)="onFileSelected($event)" />
+              </div>
             </div>
 
             <div *ngIf="error()" class="error-msg">{{ error() }}</div>
             <div *ngIf="success()" class="success-msg">
-              Law proposed successfully! ID: {{ success() }}
+              {{ action === 'derogacion' ? 'Repeal proposed successfully! Law ID:' : 'Law proposed successfully! ID:' }} {{ success() }}
             </div>
 
             <div class="actions">
-              <button mat-raised-button color="primary" (click)="submit()" [disabled]="submitting() || !text()">
-                {{ submitting() ? 'Submitting...' : 'Propose Law' }}
+              <button mat-raised-button color="primary" (click)="submit()" [disabled]="submitting() || !canSubmit()">
+                {{ submitting() ? 'Submitting...' : (action === 'derogacion' ? 'Propose Repeal' : 'Propose Law') }}
               </button>
             </div>
           </div>
@@ -111,10 +127,24 @@ export class ProposeLawComponent {
   identityService = inject(IdentityService);
 
   text = signal('');
-  action = signal('promulgacion');
+  action = 'promulgacion';
+  lawIdToRepeal = '';
   submitting = signal(false);
   error = signal('');
   success = signal('');
+  promulgatedLaws = signal<Law[]>([]);
+
+  constructor() {
+    this.apiService.getLaws('promulgated').subscribe((laws: Law[]) => {
+      this.promulgatedLaws.set(laws);
+    });
+  }
+
+  canSubmit(): boolean {
+    if (this.submitting()) return false;
+    if (this.action === 'derogacion') return !!this.lawIdToRepeal;
+    return !!this.text();
+  }
 
   onFileSelected(event: Event) {
     const input = event.target as HTMLInputElement;
@@ -129,22 +159,34 @@ export class ProposeLawComponent {
 
   async submit() {
     const id = this.identityService.identity();
-    if (!id || !this.text()) return;
+    if (!id || !this.canSubmit()) return;
 
     this.submitting.set(true);
     this.error.set('');
     this.success.set('');
 
     try {
-      const result = await firstValueFrom(this.apiService.proposeLaw({
+      const payload: any = {
         author_pubkey: id.pubkey,
-        text: this.text(),
-        action: this.action(),
-      }));
+        action: this.action,
+      };
+
+      if (this.action === 'derogacion') {
+        payload.law_id = this.lawIdToRepeal;
+        payload.text = '';
+      } else {
+        payload.text = this.text();
+      }
+
+      const result = await firstValueFrom(this.apiService.proposeLaw(payload));
       this.success.set(result?.law_id ?? 'unknown');
-      this.text.set('');
+      if (this.action !== 'derogacion') {
+        this.text.set('');
+      } else {
+        this.lawIdToRepeal = '';
+      }
     } catch (e: any) {
-      this.error.set(e.message || 'Failed to propose law');
+      this.error.set(e?.error?.detail || e.message || 'Failed to propose');
     } finally {
       this.submitting.set(false);
     }

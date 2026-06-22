@@ -72,6 +72,7 @@ async def get_law(law_id: str, redis: RedisReader = Depends(get_redis_reader)):
 async def propose_law(
     proposal: LawProposalRequest,
     publisher: RabbitMQPublisher = Depends(get_rabbitmq_publisher),
+    redis: RedisReader = Depends(get_redis_reader),
 ):
     """Propose a new law.
 
@@ -81,6 +82,19 @@ async def propose_law(
     - Generates law_id if not provided
     - Publishes to the RabbitMQ 'propuestas' queue
     """
+    if redis.store.is_in_cooldown(proposal.author_pubkey):
+        cd = redis.store.get_cooldown(proposal.author_pubkey)
+        current = redis.store.current_window_number()
+        until = cd["cooldown_until_window"]
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                f"El autor está en cooldown hasta la ventana {until} "
+                f"(ventana actual: {current}). "
+                f"Debes esperar {int(until) - current} ventana(s) más."
+            ),
+        )
+
     law = publisher.publish_law_proposal(
         author_pubkey=proposal.author_pubkey,
         text=proposal.text,
