@@ -30,7 +30,6 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r nct-coordinator/requirements.txt
-      - run: pip install -r transaction-pool/requirements.txt
       - run: pip install -r worker/requirements.txt
       - run: pip install pytest fakeredis
       - run: pytest -v --tb=short -x -k "not integration"

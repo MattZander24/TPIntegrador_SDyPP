@@ -1,6 +1,6 @@
-"""Pool Miner: worker que se conecta al Pool Coordinator vía HTTP.
+"""Pool Worker: worker que se conecta a un Pool Coordinator vía HTTP.
 
-No utiliza RabbitMQ directamente. Recibe sub-rangos del coordinator,
+No utiliza RabbitMQ directamente. Recibe sub-rangos del coordinator HTTP,
 los mina y devuelve resultados.
 """
 
@@ -9,13 +9,13 @@ from __future__ import annotations
 import json
 import logging
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 
 log = logging.getLogger("voxchain.miner")
 
 
-class PoolMiner:
+class PoolWorker:
     def __init__(self, coordinator_url: str, *, miner_id: str = "",
                  capacity: int = 1, has_gpu: bool = False,
                  mine, clock=time.time, heartbeat_interval: float = 10.0):
@@ -104,7 +104,7 @@ class PoolMiner:
         return bool(resp and resp.get("ok", False))
 
     def run(self) -> None:
-        log.info("pool-miner iniciando (coordinator=%s)", self.url)
+        log.info("pool-worker iniciando (coordinator=%s)", self.url)
         self._running = True
         while self._running and not self._registered:
             if self.register():

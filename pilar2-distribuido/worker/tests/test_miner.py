@@ -2,11 +2,10 @@
 
 import hashlib
 import os
-import sys
 
 from common.messaging import InMemoryBus
 from worker_pkg.miner import parse_miner_output, run_miner
-from worker_pkg.worker import Worker
+from worker_pkg.standalone_worker import StandaloneWorker
 
 CPU_SCRIPT = os.path.join(os.path.dirname(__file__), "..", "..", "..",
                           "pilar1-minero", "cpu", "src", "brute_force.py")
@@ -41,7 +40,7 @@ def test_run_miner_cpu_real_encuentra_nonce():
     assert h.startswith("00")
 
 
-def test_worker_publica_nonce_cuando_encuentra():
+def test_standalone_publica_nonce_cuando_encuentra():
     bus = InMemoryBus()
     publicados = []
     bus.on_nonce_response(publicados.append)
@@ -49,16 +48,34 @@ def test_worker_publica_nonce_cuando_encuentra():
     def fake_mine(base, prefix, rmin, rmax):
         return 42, "0000deadbeef0000deadbeef00001234"
 
-    w = Worker(bus, worker_id="w1", mine=fake_mine)
-    w.wire()
-    bus.publish_task({"voting_window_id": "W1", "partial_hash_base": "base",
-                      "n_zeros_required": 4, "range_min": 0, "range_max": 100})
+    sw = StandaloneWorker(bus, worker_id="w1", mine=fake_mine, clock=lambda: 0)
+    sw._rejected_actions = set()
+    sw.wire()
+    bus.publish_challenge({
+        "voting_window_id": "W1", "law_id": "L1", "action": "promulgacion",
+        "partial_hash_base": "base", "n_zeros_required": 4,
+    })
     assert len(publicados) == 1
     assert publicados[0]["nonce"] == 42
     assert publicados[0]["winning_node_or_pool"] == "w1"
 
 
-def test_worker_es_idempotente_por_ventana():
+def test_standalone_rechaza_por_accion():
+    bus = InMemoryBus()
+    publicados = []
+    bus.on_nonce_response(publicados.append)
+
+    sw = StandaloneWorker(bus, worker_id="w1", mine=lambda *a: (1, "h"), clock=lambda: 0)
+    sw._rejected_actions = {"derogacion"}
+    sw.wire()
+    bus.publish_challenge({
+        "voting_window_id": "W2", "law_id": "L2", "action": "derogacion",
+        "partial_hash_base": "base", "n_zeros_required": 5,
+    })
+    assert publicados == []
+
+
+def test_standalone_es_idempotente_por_ventana():
     bus = InMemoryBus()
     publicados = []
     bus.on_nonce_response(publicados.append)
@@ -68,34 +85,16 @@ def test_worker_es_idempotente_por_ventana():
         calls.append((rmin, rmax))
         return 1, "h"
 
-    w = Worker(bus, worker_id="w1", mine=fake_mine)
-    w.wire()
-    task = {"voting_window_id": "W1", "partial_hash_base": "base",
-            "n_zeros_required": 1, "range_min": 0, "range_max": 100}
-    bus.publish_task(task)
-    bus.publish_task({**task, "range_min": 100, "range_max": 200})  # reasignación
+    sw = StandaloneWorker(bus, worker_id="w1", mine=fake_mine, clock=lambda: 0)
+    sw._rejected_actions = set()
+    sw.wire()
+    bus.publish_challenge({
+        "voting_window_id": "W1", "law_id": "L1", "action": "promulgacion",
+        "partial_hash_base": "base", "n_zeros_required": 1,
+    })
+    bus.publish_challenge({
+        "voting_window_id": "W1", "law_id": "L2", "action": "promulgacion",
+        "partial_hash_base": "base", "n_zeros_required": 1,
+    })
     assert len(publicados) == 1  # no re-publica para la misma ventana
     assert len(calls) == 1
-
-
-def test_worker_no_publica_si_no_hay_solucion():
-    bus = InMemoryBus()
-    publicados = []
-    bus.on_nonce_response(publicados.append)
-    w = Worker(bus, worker_id="w1", mine=lambda *a: (None, None))
-    w.wire()
-    bus.publish_task({"voting_window_id": "W1", "partial_hash_base": "base",
-                      "n_zeros_required": 4, "range_min": 0, "range_max": 100})
-    assert publicados == []
-
-
-def test_worker_keepalive():
-    bus = InMemoryBus()
-    kas = []
-    bus.on_keepalive(kas.append)
-    w = Worker(bus, worker_id="w1", mine=lambda *a: (None, None), capacity=3,
-               has_gpu=True)
-    w.emit_keepalive()
-    assert kas[0]["worker_id"] == "w1"
-    assert kas[0]["capacity"] == 3
-    assert kas[0]["has_gpu"] is True

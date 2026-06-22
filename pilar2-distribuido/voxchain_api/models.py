@@ -55,7 +55,6 @@ class LawProposalRequest(BaseModel):
 class HealthResponse(BaseModel):
     api: str
     nct: str
-    trp: str
     redis: str
 
 

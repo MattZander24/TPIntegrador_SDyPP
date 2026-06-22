@@ -16,7 +16,8 @@ spec:
       terminationGracePeriodSeconds: 10
       containers:
         - name: pool-coordinator
-          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/pool-coordinator:latest
+          # Pool Coordinator ahora es el mismo worker en modo pool-coordinator
+          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
@@ -45,12 +46,10 @@ spec:
               value: /etc/ssl/certs/ca.crt
             - name: REDIS_URL
               value: "redis://redis:6379/0"
-            - name: POOL_ID
-              value: "pool-default"
+            - name: WORKER_MODE
+              value: "pool-coordinator"
             - name: POOL_HTTP_PORT
               value: "9001"
-            - name: LEADER_LEASE_TTL
-              value: "10"
           livenessProbe:
             httpGet:
               path: /health

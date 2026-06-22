@@ -1,9 +1,7 @@
-# VoxChain — Pilar 2. `docker compose up` levanta RabbitMQ, Redis, el NCT, el
-# transaction-pool y 2 workers. El contexto de build es la raíz del repo (..)
-# para que cada imagen pueda copiar el paquete `common` y, el worker, el minero
-# CPU de Pilar 1. Sin secretos en el archivo: credenciales por variables de
-# entorno (ver common/config.py). RabbitMQ usa el usuario guest por defecto, apto
-# sólo para desarrollo local; en la nube (Pilar 3) se inyectan vía Vault/Secrets.
+# VoxChain — Pilar 2. `docker compose up` levanta RabbitMQ, Redis, el NCT y
+# workers en modo standalone (por defecto). El contexto de build es la raíz del
+# repo (..) para que cada imagen pueda copiar el paquete `common` y, el worker,
+# el minero CPU de Pilar 1.
 name: voxchain-pilar2
 
 x-app-env: &app-env
@@ -55,7 +53,7 @@ services:
       ELECTION_N_ZEROS: "2"
       HEARTBEAT_INTERVAL: "3"
       HEARTBEAT_TIMEOUT: "12"
-      LEADER_LEASE_TTL: "15"   # > intervalo (3s), ≈ timeout (12s); ver config.py
+      LEADER_LEASE_TTL: "15"
     ports:
       - "8081:8080"   # health endpoint del NCT
 
@@ -76,21 +74,6 @@ services:
       HEARTBEAT_INTERVAL: "3"
       HEARTBEAT_TIMEOUT: "12"
       LEADER_LEASE_TTL: "15"
-    # Sin puerto de host: sólo red interna
-
-  transaction-pool:
-    build:
-      context: ..
-      dockerfile: pilar2-distribuido/transaction-pool/Dockerfile
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-    environment:
-      <<: *app-env
-      NONCE_SPACE: "50000000"
-      FRAGMENT_SIZE: "1000000"
-    ports:
-      - "8082:8080"   # health endpoint del TrP
 
   worker:
     build:
@@ -101,11 +84,27 @@ services:
         condition: service_healthy
     environment:
       <<: *app-env
+      WORKER_MODE: "standalone"
       WORKER_CAPACITY: "1"
     deploy:
       replicas: 2
-    # Sin publicar puerto de host: hay 2 réplicas; el health es accesible en la
-    # red interna (puerto 8080 del contenedor).
+
+  worker-pool-coordinator:
+    build:
+      context: ..
+      dockerfile: pilar2-distribuido/worker/Dockerfile
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: *app-env
+      WORKER_MODE: "pool-coordinator"
+      WORKER_ID: "pool-coordinator-1"
+      POOL_HTTP_PORT: "9001"
+    ports:
+      - "9001:9001"   # HTTP para pool-workers
 
   voxchain-api:
     build:
@@ -119,7 +118,6 @@ services:
     environment:
       <<: *app-env
       NCT_HEALTH_URL: http://coordinator:8080/health
-      TRP_HEALTH_URL: http://transaction-pool:8080/health
       PORT: "8000"
     ports:
       - "8000:8000"

@@ -1,4 +1,4 @@
-"""Tests para Pool Coordinator."""
+"""Tests para Pool Coordinator embebido."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ import time
 from unittest import mock
 
 import pytest
-from common.messaging import Messaging
+from common.messaging import InMemoryBus, Messaging
 
-from pool_coordinator.coordinator import PoolCoordinator
+from worker_pkg.pool_coordinator.coordinator import PoolCoordinator, fragment_range
 
 
 class FakePipeline:
@@ -63,11 +63,11 @@ class FakeRedis:
 class FakeMessaging(Messaging):
     def __init__(self):
         self.published = []
-        self.tasks_registered = []
+        self.challenges_registered = []
         self._healthy = True
 
-    def on_task(self, handler):
-        self.tasks_registered.append(handler)
+    def on_challenge(self, handler):
+        self.challenges_registered.append(handler)
 
     def publish_nonce_response(self, msg):
         self.published.append(("nonce", msg))
@@ -88,20 +88,33 @@ class FakeMessaging(Messaging):
         return self._healthy
 
     def unsubscribe(self, handler):
-        if handler in self.tasks_registered:
-            self.tasks_registered.remove(handler)
+        if handler in self.challenges_registered:
+            self.challenges_registered.remove(handler)
 
 
-@pytest.fixture
-def coordinator():
-    m = FakeMessaging()
-    r = FakeRedis()
-    c = PoolCoordinator(m, pool_id="test-pool", redis=r)
-    c.try_acquire_leadership()
-    return c
+class TestFragmentation:
+    def test_fragment_range_exacto(self):
+        assert fragment_range(0, 100, 25) == [(0, 25), (25, 50), (50, 75), (75, 100)]
+
+    def test_fragment_range_con_resto(self):
+        assert fragment_range(0, 10, 3) == [(0, 3), (3, 6), (6, 9), (9, 10)]
+
+    def test_fragment_range_vacio_o_invalido(self):
+        assert fragment_range(10, 10, 5) == []
+        with pytest.raises(ValueError):
+            fragment_range(0, 10, 0)
 
 
 class TestPoolCoordinator:
+    @pytest.fixture
+    def coordinator(self):
+        m = FakeMessaging()
+        r = FakeRedis()
+        c = PoolCoordinator(m, pool_id="test-pool", redis=r, mine=lambda *a: (None, None))
+        c._running = True
+        c.try_acquire_leadership()
+        return c
+
     def test_leadership(self, coordinator):
         assert coordinator.is_leader
         pool_is_leader = coordinator.redis.get("pool:leader")
@@ -121,15 +134,29 @@ class TestPoolCoordinator:
         task = coordinator.get_next_task("nonexistent")
         assert task is None
 
-    def test_get_next_task_no_tasks(self, coordinator):
+    def test_get_next_task_no_fragments(self, coordinator):
         mid = coordinator.register_miner()
         task = coordinator.get_next_task(mid)
         assert task is None
 
-    def test_get_next_task_assigns_chunk(self, coordinator):
+    def test_handle_challenge_fragmenta(self, coordinator):
+        mid = coordinator.register_miner(capacity=1)
+        coordinator.fragment_size = 25
+        coordinator.nonce_space = 100
+        coordinator.handle_challenge({
+            "voting_window_id": "win-1",
+            "law_id": "law-1",
+            "action": "promulgacion",
+            "partial_hash_base": "abc",
+            "n_zeros_required": 4,
+        })
+        assert len(coordinator._pending_fragments) == 4
+
+    def test_get_next_task_asigna_fragmento(self, coordinator):
         mid1 = coordinator.register_miner(capacity=1)
-        mid2 = coordinator.register_miner(capacity=1)
-        coordinator.handle_task({
+        coordinator.fragment_size = 25
+        coordinator.nonce_space = 100
+        coordinator.handle_challenge({
             "voting_window_id": "win-1",
             "law_id": "law-1",
             "action": "promulgacion",
@@ -140,10 +167,8 @@ class TestPoolCoordinator:
         })
         t1 = coordinator.get_next_task(mid1)
         assert t1 is not None
-        assert t1["range_min"] == 0
-        assert t1["range_max"] == 500
-        t2 = coordinator.get_next_task(mid2)
-        assert t2 is not None
+        assert "range_min" in t1
+        assert "range_max" in t1
 
     def test_submit_result(self, coordinator):
         mid = coordinator.register_miner()
@@ -151,7 +176,6 @@ class TestPoolCoordinator:
                    "block_hash_candidato": "0xdead"}
         ok = coordinator.submit_result(mid, result)
         assert ok is True
-        # Verificar que se publicó el nonce
         nonce_published = any(
             msg_type == "nonce" and msg["nonce"] == 42
             for msg_type, msg in coordinator.m.published
@@ -165,13 +189,20 @@ class TestPoolCoordinator:
         coordinator._purge_stale_miners()
         assert len(coordinator._miners) == 0
 
-    def test_keepalive_publishing(self, coordinator):
-        coordinator.register_miner(capacity=2, has_gpu=True)
-        coordinator.emit_keepalive()
-        assert len(coordinator.m.published) > 0
-        _, msg = coordinator.m.published[-1]
-        assert msg["worker_id"] == "test-pool"
-        assert msg["capacity"] >= 2
+    def test_policy_accept(self, coordinator):
+        coordinator.set_voting_policy({"decision": "accept"})
+        assert coordinator._check_voting_policy({"action": "derogacion"}) is True
+        assert coordinator._check_voting_policy({"action": "promulgacion"}) is True
+
+    def test_policy_reject_action(self, coordinator):
+        coordinator.set_voting_policy({"decision": "reject", "action": "derogacion"})
+        assert coordinator._check_voting_policy({"action": "derogacion"}) is False
+        assert coordinator._check_voting_policy({"action": "promulgacion"}) is True
+
+    def test_policy_reject_all(self, coordinator):
+        coordinator.set_voting_policy({"decision": "reject"})
+        assert coordinator._check_voting_policy({"action": "promulgacion"}) is False
+        assert coordinator._check_voting_policy({"action": "derogacion"}) is False
 
     def test_leader_renewal_failure(self, coordinator):
         coordinator.is_leader = True

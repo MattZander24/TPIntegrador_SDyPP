@@ -1,9 +1,9 @@
 """Integración extremo a extremo de Pilar 2 (sin broker: bus en memoria + fakeredis).
 
-Cablea los tres servicios reales (NCT, TrP, Worker) y el minero CPU de Pilar 1, y
-verifica el flujo completo del criterio de aceptación:
+Cablea NCT + StandaloneWorker y el minero CPU de Pilar 1, y verifica el flujo
+completo del criterio de aceptación:
 
-    proponer ley → abrir ventana → TrP fragmenta → worker resuelve el PoW →
+    proponer ley → NCT abre ventana → worker resuelve el PoW →
     NCT sella el bloque → bloque en Redis con encadenamiento válido.
 
 El bus en memoria despacha de forma síncrona, así que publicar la propuesta
@@ -18,9 +18,8 @@ import pytest
 from common.blockchain import validate_chain
 from common.storage import LawStatus, WindowResult
 from nct.coordinator import NCTCoordinator
-from trp.pool import TransactionPool
 from worker_pkg.miner import run_miner
-from worker_pkg.worker import Worker
+from worker_pkg.standalone_worker import StandaloneWorker
 
 CPU_SCRIPT = os.path.abspath(os.path.join(
     os.path.dirname(__file__), "..", "..", "pilar1-minero", "cpu", "src",
@@ -34,23 +33,22 @@ def cpu_mine(base, prefix, rmin, rmax):
 
 @pytest.fixture
 def system(bus, store):
-    """NCT + TrP + Worker cableados sobre el mismo bus/almacén."""
+    """NCT + StandaloneWorker cableados sobre el mismo bus/almacén."""
     nct = NCTCoordinator(bus, store, n_zeros=2, window_seconds_promulgacion=300,
                          window_seconds_derogacion=300, cooldown_new=1,
                          cooldown_reproposed=2)
     nct.wire()
-    trp = TransactionPool(bus, nonce_space=2_000_000, fragment_size=250_000)
-    trp.wire()
-    worker = Worker(bus, worker_id="worker-1", mine=cpu_mine)
+    worker = StandaloneWorker(bus, worker_id="worker-1", mine=cpu_mine, clock=lambda: 0)
+    worker._rejected_actions = set()
     worker.wire()
-    return nct, trp, worker
+    return nct, worker
 
 
 @pytest.mark.integration
 def test_e2e_promulgacion_sella_bloque_con_cadena_valida(system, store):
     bus_proposal = {"law_id": "ley-presupuesto", "author_pubkey": "ciudadano-A",
                     "text_hash": "sha256-del-texto", "created_at": "2026-06-16T00:00:00Z"}
-    # publish_proposal dispara: ventana → fragmentación → minado → sellado
+    # publish_proposal dispara: ventana → minado → sellado
     system[0].m.publish_proposal(bus_proposal)
 
     assert store.chain_length() == 1
