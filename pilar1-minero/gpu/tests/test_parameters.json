@@ -1,0 +1,97 @@
+{
+  "test_suite": "GPU Mining Tests",
+  "description": "Batería de tests para minería Proof of Work en GPU",
+  "implementation": "CUDA C++ with MD5 kernels",
+  "requirements": {
+    "cuda_toolkit": "Required",
+    "gpu_memory": "Minimum 2GB recommended",
+    "compute_capability": "sm_75 or higher"
+  },
+  "test_cases": [
+    {
+      "id": 1,
+      "name": "prefijo_corto",
+      "base": "hola",
+      "prefix": "0",
+      "description": "Caso base: prefijo corto '0'"
+    },
+    {
+      "id": 2,
+      "name": "prefijo_medio",
+      "base": "hola",
+      "prefix": "00",
+      "description": "Prefijo medio '00'"
+    },
+    {
+      "id": 3,
+      "name": "prefijo_largo",
+      "base": "hola",
+      "prefix": "000",
+      "description": "Prefijo largo '000'"
+    },
+    {
+      "id": 4,
+      "name": "base_diferente",
+      "base": "test",
+      "prefix": "0",
+      "description": "Base string diferente 'test'"
+    },
+    {
+      "id": 5,
+      "name": "base_largo",
+      "base": "blockchain",
+      "prefix": "0",
+      "description": "Base string largo 'blockchain'"
+    },
+    {
+      "id": 6,
+      "name": "mining_medio",
+      "base": "mining",
+      "prefix": "00",
+      "description": "Base 'mining' con prefijo medio"
+    },
+    {
+      "id": 7,
+      "name": "data_largo",
+      "base": "data",
+      "prefix": "000",
+      "description": "Base corta con prefijo largo"
+    },
+    {
+      "id": 8,
+      "name": "rango_limitado_1m",
+      "base": "hola",
+      "prefix": "0",
+      "range_min": 0,
+      "range_max": 1000000,
+      "description": "Rango limitado 0-1M (usa brute_force_range)"
+    },
+    {
+      "id": 9,
+      "name": "rango_limitado_5m",
+      "base": "hola",
+      "prefix": "00",
+      "range_min": 0,
+      "range_max": 5000000,
+      "description": "Rango limitado 0-5M (usa brute_force_range)"
+    },
+    {
+      "id": 10,
+      "name": "rango_desplazado",
+      "base": "proof",
+      "prefix": "0",
+      "range_min": 1000000,
+      "range_max": 2000000,
+      "description": "Rango desplazado 1M-2M (usa brute_force_range)"
+    }
+  ],
+  "binaries": {
+    "04_brute_force": "Basic brute force without range limits",
+    "05_brute_force_range": "Brute force with range limits"
+  },
+  "expected_difficulty": {
+    "0": "1/16 probability, ~16 nonces expected",
+    "00": "1/256 probability, ~256 nonces expected",
+    "000": "1/4096 probability, ~4096 nonces expected"
+  }
+}

@@ -1,0 +1,102 @@
+{
+  "test_suite": "CPU Mining Tests",
+  "description": "Batería de tests para minería Proof of Work en CPU",
+  "implementation": "Python + hashlib.md5",
+  "test_cases": [
+    {
+      "id": 1,
+      "name": "prefijo_corto",
+      "base": "hola",
+      "prefix": "0",
+      "range_min": 0,
+      "range_max": null,
+      "description": "Caso base: prefijo corto '0'"
+    },
+    {
+      "id": 2,
+      "name": "prefijo_medio",
+      "base": "hola",
+      "prefix": "00",
+      "range_min": 0,
+      "range_max": null,
+      "description": "Prefijo medio '00'"
+    },
+    {
+      "id": 3,
+      "name": "prefijo_largo",
+      "base": "hola",
+      "prefix": "000",
+      "range_min": 0,
+      "range_max": null,
+      "description": "Prefijo largo '000'"
+    },
+    {
+      "id": 4,
+      "name": "base_diferente",
+      "base": "test",
+      "prefix": "0",
+      "range_min": 0,
+      "range_max": null,
+      "description": "Base string diferente 'test'"
+    },
+    {
+      "id": 5,
+      "name": "base_largo",
+      "base": "blockchain",
+      "prefix": "0",
+      "range_min": 0,
+      "range_max": null,
+      "description": "Base string largo 'blockchain'"
+    },
+    {
+      "id": 6,
+      "name": "mining_medio",
+      "base": "mining",
+      "prefix": "00",
+      "range_min": 0,
+      "range_max": null,
+      "description": "Base 'mining' con prefijo medio"
+    },
+    {
+      "id": 7,
+      "name": "data_largo",
+      "base": "data",
+      "prefix": "000",
+      "range_min": 0,
+      "range_max": null,
+      "description": "Base corta con prefijo largo"
+    },
+    {
+      "id": 8,
+      "name": "rango_limitado_1m",
+      "base": "hola",
+      "prefix": "0",
+      "range_min": 0,
+      "range_max": 1000000,
+      "description": "Rango limitado 0-1M"
+    },
+    {
+      "id": 9,
+      "name": "rango_limitado_5m",
+      "base": "hola",
+      "prefix": "00",
+      "range_min": 0,
+      "range_max": 5000000,
+      "description": "Rango limitado 0-5M"
+    },
+    {
+      "id": 10,
+      "name": "rango_desplazado",
+      "base": "proof",
+      "prefix": "0",
+      "range_min": 1000000,
+      "range_max": 2000000,
+      "description": "Rango desplazado 1M-2M"
+    }
+  ],
+  "expected_difficulty": {
+    "0": "1/16 probability, ~16 nonces expected",
+    "00": "1/256 probability, ~256 nonces expected",
+    "000": "1/4096 probability, ~4096 nonces expected"
+  }
+}
