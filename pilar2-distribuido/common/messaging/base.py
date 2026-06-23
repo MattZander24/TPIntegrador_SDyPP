@@ -18,11 +18,12 @@ QUEUE_RESPUESTA_NONCE = "respuesta_nonce"  # red → NCT
 QUEUE_TAREAS = "tareas_trp"                # TrP → workers (interno)
 QUEUE_KEEPALIVE = "keepalive_trp"          # workers → TrP (interno)
 
-# Flujos del Bully distribuido (AGENT.md 4, P2):
+# Heartbeat del NCT activo (AGENT.md 4, P2):
+# La elección de sucesor se resuelve vía Redis (elect_acquire_leadership),
+# no vía mensajería, por lo que no existe cola nct_election.
 EXCHANGE_HEARTBEAT = "nct.heartbeat"       # NCT activo → backups (topic)
 HEARTBEAT_ROUTING_KEY = "nct.heartbeat.live"
 HEARTBEAT_BINDING_KEY = "nct.heartbeat.#"
-QUEUE_ELECTION = "nct_election"            # backups → backups (cola)
 
 # Topics (exchanges) → fan-out: cada consumidor recibe una copia.
 # El resto son colas de trabajo → consumidores competidores (round-robin),
@@ -42,7 +43,6 @@ class Messaging:
     def publish_task(self, task: dict) -> None: raise NotImplementedError
     def publish_keepalive(self, keepalive: dict) -> None: raise NotImplementedError
     def publish_heartbeat(self, hb: dict) -> None: raise NotImplementedError
-    def publish_election_claim(self, claim: dict) -> None: raise NotImplementedError
 
     # -- suscripción (registra callback; se ejecutan al consumir) --
     def on_proposal(self, handler: Handler) -> None: raise NotImplementedError
@@ -51,7 +51,6 @@ class Messaging:
     def on_task(self, handler: Handler) -> None: raise NotImplementedError
     def on_keepalive(self, handler: Handler) -> None: raise NotImplementedError
     def on_heartbeat(self, handler: Handler) -> None: raise NotImplementedError
-    def on_election_claim(self, handler: Handler) -> None: raise NotImplementedError
 
     # -- cancelación de consumo (gating por liderazgo, AGENT.md 4) --
     # Un NCT follower NO debe consumir las colas de trabajo (propuestas,
@@ -79,7 +78,7 @@ class InMemoryBus(Messaging):
     - **Topics** (``desafio_activo``, ``nct.heartbeat``): fan-out, cada
       suscriptor recibe una copia.
     - **Colas de trabajo** (``propuestas``, ``respuesta_nonce``, ``tareas_trp``,
-      ``keepalive_trp``, ``nct_election``): consumidores competidores; cada
+      ``keepalive_trp``): consumidores competidores; cada
       mensaje va a **un solo** consumidor en round-robin, igual que RabbitMQ
       reparte una cola. Por eso dos NCT suscritos a ``propuestas`` se reparten
       los mensajes (clave para el test del BUG 1: el follower no debe suscribirse).
@@ -122,7 +121,6 @@ class InMemoryBus(Messaging):
     def publish_task(self, task): self._dispatch(QUEUE_TAREAS, task)
     def publish_keepalive(self, keepalive): self._dispatch(QUEUE_KEEPALIVE, keepalive)
     def publish_heartbeat(self, hb): self._dispatch(EXCHANGE_HEARTBEAT, hb)
-    def publish_election_claim(self, claim): self._dispatch(QUEUE_ELECTION, claim)
 
     # suscripción
     def on_proposal(self, handler): self._register(QUEUE_PROPUESTAS, handler)
@@ -131,7 +129,6 @@ class InMemoryBus(Messaging):
     def on_task(self, handler): self._register(QUEUE_TAREAS, handler)
     def on_keepalive(self, handler): self._register(QUEUE_KEEPALIVE, handler)
     def on_heartbeat(self, handler): self._register(EXCHANGE_HEARTBEAT, handler)
-    def on_election_claim(self, handler): self._register(QUEUE_ELECTION, handler)
 
     def start_consuming(self, tick=None, tick_interval: float = 1.0) -> None:
         # En el bus en memoria el consumo es inmediato en publish; no hay loop.

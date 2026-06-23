@@ -64,9 +64,8 @@ POOL_HTTP_PORT = get_int("POOL_HTTP_PORT", 9001)
 
 HEALTH_PORT = get_int("HEALTH_PORT", 8080)
 
-# Bully distribuido (AGENT.md 4)
+# Failover del NCT (AGENT.md 4)
 NCT_ID = get("NCT_ID", "nct-default")
-ELECTION_N_ZEROS = get_int("ELECTION_N_ZEROS", 3)  # dificultad del mini-PoW
 HEARTBEAT_INTERVAL = get_int("HEARTBEAT_INTERVAL", 3)   # segundos entre heartbeats
 HEARTBEAT_TIMEOUT = get_int("HEARTBEAT_TIMEOUT", 12)    # segundos sin HB → elección
 # TTL del lease nct:leader. Debe ser > HEARTBEAT_INTERVAL (el líder renueva a esa

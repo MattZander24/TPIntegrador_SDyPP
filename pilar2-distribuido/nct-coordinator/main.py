@@ -77,7 +77,6 @@ def main() -> None:
     monitor = NCTHeartbeatMonitor(
         messaging, store,
         candidate_id=config.NCT_ID,
-        election_n_zeros=config.ELECTION_N_ZEROS,
         heartbeat_timeout=config.HEARTBEAT_TIMEOUT,
         on_elected=nct.become_leader,
         initial_is_leader=is_leader_now,
@@ -95,9 +94,8 @@ def main() -> None:
         log.info("arrancando como LÍDER (%s); monitor en standby hasta step_down",
                  config.NCT_ID)
     else:
-        log.info("arrancando como FOLLOWER (%s); monitoreando heartbeats "
-                 "(timeout=%ds, elección=%d ceros)",
-                 config.NCT_ID, config.HEARTBEAT_TIMEOUT, config.ELECTION_N_ZEROS)
+        log.info("arrancando como FOLLOWER (%s); monitoreando heartbeats (timeout=%ds)",
+                 config.NCT_ID, config.HEARTBEAT_TIMEOUT)
 
     def health() -> dict:
         return {

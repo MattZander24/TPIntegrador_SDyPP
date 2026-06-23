@@ -22,7 +22,6 @@ from .base import (
     EXCHANGE_HEARTBEAT,
     HEARTBEAT_ROUTING_KEY,
     HEARTBEAT_BINDING_KEY,
-    QUEUE_ELECTION,
 )
 
 __all__ = [
@@ -36,7 +35,6 @@ __all__ = [
     "EXCHANGE_HEARTBEAT",
     "HEARTBEAT_ROUTING_KEY",
     "HEARTBEAT_BINDING_KEY",
-    "QUEUE_ELECTION",
 ]
 
 

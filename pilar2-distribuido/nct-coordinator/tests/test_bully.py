@@ -1,82 +1,17 @@
-"""Tests de la sucesión del NCT por esfuerzo (Bully mejorado, AGENT.md 4)."""
+"""Tests de la sucesión del NCT (failover por lease Redis, AGENT.md 4).
+
+El Bully-por-esfuerzo PoW se eliminó del NCT (los nodos son homogéneos en GCP,
+sin ventaja de cómputo entre ellos). La elección se resuelve vía Redis:
+elect_acquire_leadership + dead_threshold.
+"""
 
 import pytest
 
-from nct.bully import elect_new_nct, run_distributed_election, solve_mini_challenge
-
-
-def test_solve_mini_challenge_devuelve_nonce_valido():
-    from common.blockchain.challenge import compute_hash
-    seed = "ultimo-bloque-hash::epoca-1"
-    nonce = solve_mini_challenge(seed, 2)
-    assert nonce is not None
-    assert compute_hash(seed, nonce).startswith("00")
-
-
-def test_elige_al_que_llego_primero_no_por_id():
-    seed = "seed-eleccion"
-    n = 2
-    n1 = solve_mini_challenge(seed, n)
-    # Dos candidatos con la misma (válida) solución; gana el de menor arrived_at
-    candidatos = [
-        {"candidate_id": "Z-nodo", "nonce": n1, "arrived_at": 10.0},
-        {"candidate_id": "A-nodo", "nonce": n1, "arrived_at": 20.0},
-    ]
-    # Aunque "A-nodo" tendría menor ID alfabético, gana "Z-nodo" por esfuerzo/tiempo
-    assert elect_new_nct(candidatos, seed, n) == "Z-nodo"
-
-
-def test_descarta_candidatos_con_solucion_invalida():
-    seed = "seed-eleccion"
-    n = 3
-    valido = solve_mini_challenge(seed, n)
-    candidatos = [
-        {"candidate_id": "tramposo", "nonce": 0, "arrived_at": 1.0},
-        {"candidate_id": "honesto", "nonce": valido, "arrived_at": 5.0},
-    ]
-    assert elect_new_nct(candidatos, seed, n) == "honesto"
-
-
-def test_sin_candidatos_validos_devuelve_none():
-    assert elect_new_nct([], "seed", 2) is None
-
-
-def test_run_distributed_election_gana_sin_competencia(bus, store):
-    """Un candidato solo gana la elección sin competencia."""
-    seed = f"{store.last_block_hash()}::election-test"
-    won = run_distributed_election(
-        seed=seed, n_zeros=2, candidate_id="nct-standby",
-        messaging=bus, store=store,
-    )
-    assert won is True
-    assert store.get_leader() == "nct-standby"
-
-
-def test_run_distributed_election_segundo_candidato_pierde(bus, store):
-    """Dos candidatos en el mismo bus: el primero gana, el segundo pierde."""
-    seed = f"{store.last_block_hash()}::election-dual"
-
-    # El primer candidato gana
-    won_a = run_distributed_election(
-        seed=seed, n_zeros=2, candidate_id="nct-A",
-        messaging=bus, store=store,
-    )
-    assert won_a is True
-    assert store.get_leader() == "nct-A"
-
-    # El segundo candidato (mismo seed) pierde porque A ya está en Redis
-    won_b = run_distributed_election(
-        seed=seed, n_zeros=2, candidate_id="nct-B",
-        messaging=bus, store=store,
-    )
-    assert won_b is False
-    assert store.get_leader() == "nct-A"
+from nct.coordinator import NCTCoordinator
 
 
 def test_standby_ignora_propuestas_cuando_no_es_leader(bus, store):
     """NCT con is_leader=False no procesa propuestas."""
-    from nct.coordinator import NCTCoordinator
-
     standby = NCTCoordinator(
         bus, store, n_zeros=2, window_seconds_promulgacion=300,
         window_seconds_derogacion=300, cooldown_new=1, cooldown_reproposed=2,
@@ -94,8 +29,6 @@ def test_standby_ignora_propuestas_cuando_no_es_leader(bus, store):
 
 def test_standby_procesa_propuestas_tras_ser_leader(bus, store):
     """become_leader() activa el procesamiento de propuestas en un standby."""
-    from nct.coordinator import NCTCoordinator
-
     standby = NCTCoordinator(
         bus, store, n_zeros=2, window_seconds_promulgacion=300,
         window_seconds_derogacion=300, cooldown_new=1, cooldown_reproposed=2,
@@ -111,18 +44,15 @@ def test_standby_procesa_propuestas_tras_ser_leader(bus, store):
     })
     law = store.get_law("L-convertida")
     assert law is not None
-    # La ley fue procesada: pasó a ventana (sin worker no se promulga)
     assert law["status"] in ("in_window", "promulgated")
 
 
-def test_takeover_distribuido_completo(bus, store):
-    """Escenario completo: primario cae → standby gana elección → procesa leyes."""
+def test_takeover_redis_completo(bus, store):
+    """Escenario completo: primario cae → standby adquiere lease → procesa leyes."""
     from common.blockchain import validate_chain
     from common.storage import LawStatus
-    from nct.coordinator import NCTCoordinator
 
-    # Fase 1: NCT primario procesa una ley (usamos ventana que expira negativa
-    # y llamamos check_deadline manualmente para simular el cierre)
+    # Fase 1: NCT primario procesa una ley (ventana expira negativa → descartada)
     primary = NCTCoordinator(
         bus, store, n_zeros=2, window_seconds_promulgacion=-1,
         window_seconds_derogacion=-1, cooldown_new=1, cooldown_reproposed=2,
@@ -134,21 +64,15 @@ def test_takeover_distribuido_completo(bus, store):
         "text_hash": "ha", "created_at": "t",
     })
     primary.check_deadline()
-    # Sin nonce, la ley vence y queda descartada (es correcto: no hay worker)
     assert store.get_law("L-vieja")["status"] == LawStatus.DISCARDED
 
-    store.clear_leadership()  # simula caída del primario
-
-    # Fase 2: standby gana la elección
-    seed = f"{store.last_block_hash()}::takeover-test"
-    won = run_distributed_election(
-        seed=seed, n_zeros=2, candidate_id="nct-nuevo",
-        messaging=bus, store=store,
-    )
+    # Fase 2: caída del primario — standby adquiere el lease vía Redis
+    store.clear_leadership()
+    won = store.try_acquire_leadership("nct-nuevo", ttl=20)
     assert won is True
     assert store.get_leader() == "nct-nuevo"
 
-    # Fase 3: nuevo líder procesa otra ley (también vence por deadline negativo)
+    # Fase 3: nuevo líder procesa otra ley
     nuevo = NCTCoordinator(
         bus, store, n_zeros=2, window_seconds_promulgacion=-1,
         window_seconds_derogacion=-1, cooldown_new=1, cooldown_reproposed=2,
@@ -162,6 +86,25 @@ def test_takeover_distribuido_completo(bus, store):
     nuevo.check_deadline()
     assert store.get_law("L-nueva")["status"] == LawStatus.DISCARDED
 
-    # Cadena: sin soluciones, no hay bloques (lo que es correcto)
     resolver = lambda b: store.get_window(b.voting_window_id)["partial_hash_base"]
     assert validate_chain(store.get_chain(), base_resolver=resolver) is True
+
+
+def test_elect_acquire_leadership_respeta_dead_threshold(store):
+    """elect_acquire_leadership adquiere el lease si el TTL del holder es bajo."""
+    store.try_acquire_leadership("nct-muerto", ttl=3)
+
+    # TTL bajo (< dead_threshold=6) → puede adquirir
+    won = store.elect_acquire_leadership("nct-nuevo", ttl=20, dead_threshold=6)
+    assert won is True
+    assert store.get_leader() == "nct-nuevo"
+
+
+def test_elect_acquire_leadership_bloquea_si_lider_vivo(store):
+    """elect_acquire_leadership falla si el holder tiene TTL alto (lider vivo)."""
+    store.try_acquire_leadership("nct-vivo", ttl=20)
+
+    # TTL alto (> dead_threshold=6) → no puede adquirir
+    won = store.elect_acquire_leadership("nct-otro", ttl=20, dead_threshold=6)
+    assert won is False
+    assert store.get_leader() == "nct-vivo"

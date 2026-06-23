@@ -19,7 +19,6 @@ import pytest
 
 from common.messaging import (
     EXCHANGE_HEARTBEAT,
-    QUEUE_ELECTION,
     QUEUE_PROPUESTAS,
     QUEUE_RESPUESTA_NONCE,
 )
@@ -49,7 +48,7 @@ def _follower_node(bus, store, nct_id="nct-standby"):
     """Un nodo NCT en estado follower: coordinator + monitor de heartbeats."""
     nct = _nct(bus, store, nct_id=nct_id, is_leader=False)
     monitor = NCTHeartbeatMonitor(
-        bus, store, candidate_id=nct_id, election_n_zeros=2,
+        bus, store, candidate_id=nct_id,
         heartbeat_timeout=12, on_elected=nct.become_leader)
     monitor.wire()
     return nct, monitor
@@ -60,7 +59,7 @@ def _full_node(bus, store, *, nct_id, is_leader, clock=None):
     kw = {"clock": clock} if clock else {}
     nct = _nct(bus, store, nct_id=nct_id, is_leader=is_leader, **kw)
     monitor = NCTHeartbeatMonitor(
-        bus, store, candidate_id=nct_id, election_n_zeros=2,
+        bus, store, candidate_id=nct_id,
         heartbeat_timeout=12, on_elected=nct.become_leader,
         initial_is_leader=is_leader,
         **({"clock": clock} if clock else {}),
@@ -81,13 +80,12 @@ def _solve_from(base, n_zeros, start=0):
 # ---- BUG 1: gating de suscripción por liderazgo ---------------------------
 
 def test_follower_no_consume_colas_de_trabajo(bus, store):
-    """Un follower escucha heartbeat/elección pero NO las colas de trabajo."""
+    """Un follower escucha heartbeat pero NO las colas de trabajo."""
     nct, _ = _follower_node(bus, store)
     consumidas = bus.consumed_queues()
     assert QUEUE_PROPUESTAS not in consumidas
     assert QUEUE_RESPUESTA_NONCE not in consumidas
     assert EXCHANGE_HEARTBEAT in consumidas
-    assert QUEUE_ELECTION in consumidas
     assert nct.consumed_work_queues() == set()
 
 
@@ -218,7 +216,6 @@ def test_todo_follower_monitorea_independientemente_del_id(bus, store,
 
     consumed = bus.consumed_queues()
     assert EXCHANGE_HEARTBEAT in consumed,  f"{follower_id}: debe consumir nct.heartbeat"
-    assert QUEUE_ELECTION in consumed,      f"{follower_id}: debe consumir nct_election"
     assert QUEUE_PROPUESTAS not in consumed
     assert QUEUE_RESPUESTA_NONCE not in consumed
     assert nct.consumed_work_queues() == set()
@@ -302,8 +299,8 @@ def test_lease_ttl_expira_sin_renovacion(store):
     time.sleep(TTL + 0.3)
     assert store.get_leader() is None, "el lease debe haber expirado"
 
-    # Ahora el follower puede adquirir (clave expirada → Lua la ve como absent).
-    assert store.elect_acquire_leadership("nct-follower", ttl=5, dead_threshold=1) is True
+    # Ahora el follower puede adquirir (clave expirada).
+    assert store.try_acquire_leadership("nct-follower", ttl=5) is True
     assert store.get_leader() == "nct-follower"
 
 
@@ -327,8 +324,6 @@ def test_primary_step_down_activa_su_monitor(bus, store):
     assert mon_primary._is_leader is False
     assert nct_primary.is_leader is False
 
-    # Y el bus debe incluir las colas de elección/heartbeat (el monitor ya estaba
-    # cableado desde el inicio; wire() las registró al arrrancar).
+    # El monitor estaba cableado desde el inicio; wire() registró nct.heartbeat.
     consumed = bus.consumed_queues()
     assert EXCHANGE_HEARTBEAT in consumed
-    assert QUEUE_ELECTION in consumed

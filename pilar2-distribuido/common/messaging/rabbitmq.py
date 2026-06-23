@@ -26,7 +26,6 @@ from .base import (
     EXCHANGE_HEARTBEAT,
     HEARTBEAT_ROUTING_KEY,
     HEARTBEAT_BINDING_KEY,
-    QUEUE_ELECTION,
 )
 
 log = logging.getLogger("voxchain.messaging")
@@ -74,7 +73,6 @@ class RabbitMQMessaging(Messaging):
         ch.queue_declare(queue=QUEUE_RESPUESTA_NONCE, durable=True)
         ch.queue_declare(queue=QUEUE_TAREAS, durable=True)
         ch.queue_declare(queue=QUEUE_KEEPALIVE, durable=True)
-        ch.queue_declare(queue=QUEUE_ELECTION, durable=True)
         ch.exchange_declare(exchange=EXCHANGE_DESAFIO, exchange_type="topic",
                             durable=True)
         ch.exchange_declare(exchange=EXCHANGE_HEARTBEAT, exchange_type="topic",
@@ -104,8 +102,6 @@ class RabbitMQMessaging(Messaging):
     def publish_keepalive(self, keepalive): self._publish("", QUEUE_KEEPALIVE, keepalive)
     def publish_heartbeat(self, hb):
         self._publish(EXCHANGE_HEARTBEAT, HEARTBEAT_ROUTING_KEY, hb)
-    def publish_election_claim(self, claim):
-        self._publish("", QUEUE_ELECTION, claim)
 
     # -- suscripción --------------------------------------------------------
     # Registrar un handler también arranca el consumidor si ya estamos en el
@@ -117,7 +113,6 @@ class RabbitMQMessaging(Messaging):
     def on_keepalive(self, handler): self._subscribe(QUEUE_KEEPALIVE, handler)
     def on_challenge(self, handler): self._subscribe(EXCHANGE_DESAFIO, handler)
     def on_heartbeat(self, handler): self._subscribe(EXCHANGE_HEARTBEAT, handler)
-    def on_election_claim(self, handler): self._subscribe(QUEUE_ELECTION, handler)
 
     def _subscribe(self, stream: str, handler: Callable[[dict], None]) -> None:
         self._handlers[stream] = handler

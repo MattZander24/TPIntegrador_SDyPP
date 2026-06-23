@@ -21,7 +21,7 @@
 6. [Flujo feliz: de la propuesta al bloque sellado](#6-flujo-feliz-de-la-propuesta-al-bloque-sellado)
 7. [Casos no felices del dominio (reglas de gobierno)](#7-casos-no-felices-del-dominio-reglas-de-gobierno)
 8. [Casos no felices de infraestructura (caídas y fallos)](#8-casos-no-felices-de-infraestructura-caídas-y-fallos)
-9. [Tolerancia a fallos del NCT: Bully por esfuerzo](#9-tolerancia-a-fallos-del-nct-bully-por-esfuerzo)
+9. [Tolerancia a fallos del NCT: failover por lease Redis](#9-tolerancia-a-fallos-del-nct-failover-por-lease-redis)
 10. [Concurrencia y condiciones de carrera](#10-concurrencia-y-condiciones-de-carrera)
 11. [Seguridad y ataques](#11-seguridad-y-ataques)
 12. [Despliegue, escalado y observabilidad](#12-despliegue-escalado-y-observabilidad)
@@ -41,16 +41,19 @@ en *cabezas contadas*.
 
 La idea original del proyecto es **mejorar el algoritmo Bully**: en lugar de
 elegir coordinador por el mayor ID (criterio arbitrario), se elige por **prueba
-de esfuerzo real**. Esto se aplica en tres lugares:
+de esfuerzo real**. El principio se aplica de forma diferenciada según la
+topología de cada componente:
 
 - **Gobierno:** ganar el derecho a promulgar/derogar una ley es "ganarle al
-  resto" resolviendo el PoW primero.
-- **Sucesión del coordinador (NCT):** si el coordinador cae, su sucesor se elige
-  con un mini-desafío de PoW entre los candidatos, no por ID.
-- **Elección del Pool Coordinator:** si el pool líder cae, los candidatos
-  compiten con un mini-PoW sobre Redis (sin RabbitMQ). El nodo más potente —
-  normalmente el que tiene GPU — suele ganar, que es exactamente quien debería
-  coordinar la facción.
+  resto" resolviendo el PoW completo primero. El más potente gana.
+- **Elección del Pool Coordinator (k3s, heterogéneo):** los pools corren en el
+  cluster de workers donde hay nodos GPU. Al caer el líder, los candidatos
+  compiten con un mini-PoW sobre Redis; el nodo con GPU lo resuelve antes y
+  asume como coordinador — exactamente quien debería serlo.
+- **Failover del NCT (GCP, homogéneo):** los NCT son VMs idénticas en GCP. El
+  PoW no discrimina capacidad real entre ellos, así que el failover usa **lease
+  Redis puro**: quien detecta primero la caída del heartbeat adquiere el lease
+  (`elect_acquire_leadership`). Más simple, mismo resultado.
 
 ---
 
@@ -72,7 +75,7 @@ El sistema está partido en **3 pilares**:
 |---|---|---|
 | **voxchain-api** (FastAPI) | Gateway HTTP. Recibe propuestas del frontend, las publica a RabbitMQ; lee el estado de Redis para exponer la cadena, leyes y ventanas. Emite eventos en tiempo real por **SSE**. | HTTP ↔ frontend; publica a RabbitMQ; lee Redis |
 | **voxchain-frontend** (Angular) | UI web. Genera identidad (par de claves) localmente, propone leyes, muestra la cadena en vivo. | HTTP ↔ API; SSE |
-| **NCT (Nodo Coordinador de Tareas)** | El corazón del consenso. Gestiona **exclusivamente** las ventanas de votación: encola leyes, abre/cierra ventanas, verifica nonces y sella bloques. Corre con **réplica primary + standby** y failover por Bully. | Consume RabbitMQ; lee/escribe Redis |
+| **NCT (Nodo Coordinador de Tareas)** | El corazón del consenso. Gestiona **exclusivamente** las ventanas de votación: encola leyes, abre/cierra ventanas, verifica nonces y sella bloques. Corre con **réplica primary + standby** y failover por lease Redis. | Consume RabbitMQ; lee/escribe Redis |
 | **Transaction Pool (TrP)** | Recibe el desafío activo y **fragmenta** el espacio de nonces en tramos pequeños que reparte a los workers. Recibe keep-alives para conocer la capacidad disponible. | RabbitMQ |
 | **Worker** | Minero "standalone". Consume un fragmento de rango, mina (puente al binario CUDA o CPU del Pilar 1) y publica el nonce si lo encuentra. | RabbitMQ |
 | **Pool Coordinator** | Una **facción política**: agrega varios *pool-miners* vía HTTP. Desde afuera es indistinguible de un worker. Subdivide el rango recibido entre sus miners. | RabbitMQ (hacia el NCT/TrP) + HTTP (hacia sus miners) |
@@ -95,8 +98,8 @@ Hay **dos tipos de canales** en RabbitMQ, y la diferencia es crucial para
 entender los fallos:
 
 - **Colas de trabajo** (`propuestas`, `respuesta_nonce`, `tareas_trp`,
-  `keepalive_trp`, `nct_election`): RabbitMQ reparte cada mensaje a **un solo
-  consumidor** (round-robin entre los consumidores conectados).
+  `keepalive_trp`): RabbitMQ reparte cada mensaje a **un solo consumidor**
+  (round-robin entre los consumidores conectados).
 - **Topics / exchanges de broadcast** (`desafio_activo`, `nct.heartbeat`):
   **fan-out**, cada suscriptor recibe **una copia** del mensaje.
 
@@ -110,7 +113,10 @@ Los flujos:
 | 4 | `tareas_trp` | cola | TrP → workers | Un fragmento del espacio de nonces (`range_min`, `range_max`, más los datos del desafío). |
 | 5 | `keepalive_trp` | cola | workers → TrP | Keep-alive con capacidad y si tiene GPU. |
 | 6 | `nct.heartbeat` | **topic** | NCT líder → followers | Latido periódico del líder (cada `HEARTBEAT_INTERVAL` ≈ 3 s). |
-| 7 | `nct_election` | cola | candidato → candidatos | Claim de elección: "yo resolví el mini-PoW, este es mi nonce". |
+
+> **Nota:** la cola `nct_election` fue eliminada. El failover del NCT ya no
+> usa RabbitMQ para coordinar la elección; la resuelve Redis directamente
+> (ver §9).
 
 **Garantías de RabbitMQ usadas:**
 - Mensajes **persistentes** (`delivery_mode=2`) y colas **durables** → sobreviven
@@ -318,12 +324,10 @@ Este es **el caso central** del proyecto. Resumen (detalle en §9):
 1. El NCT líder deja de emitir heartbeats (`nct.heartbeat`).
 2. Los followers (standby, o cualquier nodo sin lease) detectan el silencio tras
    `HEARTBEAT_TIMEOUT` (12 s).
-3. Se dispara la **elección Bully por esfuerzo**: cada candidato resuelve un
-   mini-PoW (`ELECTION_N_ZEROS` = 3 ceros) sobre un seed compartido (hash del
-   último bloque).
-4. El primero que lo resuelve publica su claim a `nct_election` y adquiere el
-   **lease** `nct:leader` en Redis (vía Lua/SET con reglas de TTL).
-5. Ese candidato se promueve a líder: **abre las colas de trabajo**
+3. El monitor del follower (`NCTHeartbeatMonitor`) detecta el silencio y llama
+   a `store.elect_acquire_leadership()` directamente en Redis: si el TTL del
+   lease del líder caído es ≤ `dead_threshold` (6 s), lo adquiere.
+4. Ese candidato se promueve a líder: **abre las colas de trabajo**
    (`propuestas`, `respuesta_nonce`) y empieza a emitir heartbeats.
 6. **La ventana en curso se pierde.** El nuevo NCT siempre arranca con una
    ventana nueva (limitación declarada — AGENT.md §4). El cómputo de la ventana
@@ -505,58 +509,58 @@ el tiempo de re-registro de los miners (~10-15 s).
 
 ---
 
-## 9. Tolerancia a fallos del NCT: Bully por esfuerzo
+## 9. Tolerancia a fallos del NCT: failover por lease Redis
 
-El mecanismo estrella del proyecto. Componentes:
+Componentes:
 
 - **`nct/coordinator.py`** — el coordinador en sí (líder o follower).
-- **`nct/monitor.py`** — observa heartbeats y dispara la elección.
-- **`nct/bully.py`** — resuelve el mini-PoW y arbitra el ganador.
-- **Redis** — `nct:leader` (el lease) es el árbitro final y autoritativo.
+- **`nct/monitor.py`** — observa heartbeats y adquiere el lease al detectar la caída.
+- **Redis** — `nct:leader` (el lease) es el árbitro único y autoritativo.
+
+> **Por qué no hay PoW en el NCT:** los nodos NCT son VMs homogéneas en GCP
+> (sin GPU). Un PoW no discrimina capacidad real entre ellos y agrega complejidad
+> sin beneficio. El Pool Coordinator (k3s, con GPU) sí usa PoW porque allí la
+> potencia de cómputo es el criterio relevante (ver §8.9).
 
 ### Roles y arranque
 - `NCT_MODE=primary`: intenta adquirir el lease al arrancar (SETNX). Si lo
   consigue, es líder inicial; si no, arranca como follower.
 - `NCT_MODE=standby`: arranca como follower.
 - **El rol real lo decide el lease, no la etiqueta.** Cualquier nodo sin lease
-  corre el monitor y puede ganar una elección futura.
+  corre el monitor y puede tomar el relevo.
 
 ### El líder, mientras vive
 - Cada `tick()` (1 s): chequea deadline de la ventana, abre ventanas si hace
   falta, y cada `HEARTBEAT_INTERVAL` (3 s) **renueva el lease** y **emite
   heartbeat**.
-- Si la renovación del lease falla → `step_down()` (alguien le ganó el lease →
+- Si la renovación del lease falla → `step_down()` (otro NCT adquirió el lease →
   split-brain, ver 8.3).
 
 ### El follower, vigilando
-- Se suscribe a `nct.heartbeat` y `nct_election`. **NO** consume las colas de
-  trabajo (si lo hiciera, le robaría la mitad de los mensajes al líder por el
-  round-robin de RabbitMQ — este es el "BUG 1" que se corrigió con el *gating*
-  por liderazgo).
-- Si pasan `HEARTBEAT_TIMEOUT` (12 s) sin heartbeat → dispara la elección.
+- Se suscribe únicamente a `nct.heartbeat`. **NO** consume las colas de trabajo
+  (si lo hiciera, le robaría mensajes al líder por el round-robin de RabbitMQ —
+  el "BUG 1" corregido con *gating* por liderazgo).
+- Si pasan `HEARTBEAT_TIMEOUT` (12 s) sin heartbeat → intenta el failover.
 
-### La elección (`run_distributed_election`)
-1. Calcula el seed: `hash_del_último_bloque + "::election-" + timestamp`
-   (determinístico y compartido → competencia justa).
-2. Resuelve el mini-PoW localmente (`ELECTION_N_ZEROS` = 3 ceros).
-3. **Backoff:** si mientras resuelve recibe un claim válido de otro candidato que
-   se adelantó, **se retira**.
-4. Si resuelve primero: publica su claim a `nct_election` y **adquiere el lease**
-   con `elect_acquire_leadership()`:
+### El failover (`monitor.tick`)
+1. Detectado el timeout, llama a `store.elect_acquire_leadership(candidate_id,
+   ttl=LEADER_LEASE_TTL, dead_threshold=LEADER_DEAD_THRESHOLD)`.
+2. `elect_acquire_leadership` aplica estas reglas en orden:
    - Lease inexistente (expiró) → adquiere.
-   - Lease es suyo (restart) → renueva.
-   - Lease es de otro con **TTL bajo** (`≤ dead_threshold`, ≈6 s) → el holder
-     está muerto → adquiere.
-   - Lease es de otro con **TTL alto** → otro candidato ganó la elección
-     concurrente → **falla** (evita split-brain).
-5. El ganador llama `become_leader()`: abre las colas de trabajo, relee el último
-   autor, **descarta cualquier ventana en curso** y abre una nueva si hay leyes.
+   - Lease es suyo (restart tras crash) → renueva TTL.
+   - Lease de otro con **TTL ≤ dead_threshold** (≈6 s) → el holder está muerto
+     → adquiere.
+   - Lease de otro con **TTL alto** → otro standby ya ganó → falla (sin
+     split-brain).
+3. Si ganó: llama `become_leader()` → abre las colas de trabajo, relee el último
+   autor, **descarta la ventana en curso** y abre una nueva si hay leyes en cola.
 
-### Por qué es "Bully mejorado"
-El Bully clásico elige por **mayor ID** — arbitrario, y en redes amplias con
-nodos lejanos no refleja capacidad real. Aquí el sucesor se gana **resolviendo un
-PoW**: quien tiene más poder de cómputo (o más suerte) y está mejor conectado
-gana, que es exactamente la filosofía de toda la red VoxChain.
+### Por qué el Bully mejorado sigue presente en el sistema
+El Bully clásico elige por **mayor ID** — arbitrario. El proyecto mejora esto
+aplicando **esfuerzo real** donde tiene sentido: en el gobierno (PoW completo),
+en el Pool Coordinator (mini-PoW con ventaja GPU) y, para el NCT, priorizando
+al nodo que detectó antes la caída — que en GCP con heartbeat de 3 s es el
+mejor proxy de "disponibilidad real".
 
 ---
 
@@ -565,7 +569,7 @@ gana, que es exactamente la filosofía de toda la red VoxChain.
 | Carrera | Cómo se resuelve |
 |---|---|
 | Dos workers resuelven el mismo desafío | `try_seal_window` (SETNX en Redis): el primero gana, el resto se descartan como tardíos. |
-| Dos candidatos ganan la elección casi a la vez | Backoff del PoW (el segundo ve el claim del primero y se retira) + reglas de TTL del lease. |
+| Dos NCT standby intentan el failover a la vez | `elect_acquire_leadership`: el segundo ve TTL alto del ganador y falla — sin split-brain. |
 | Dos NCT como líder (split-brain) | `renew_leadership` (Lua atómico) → el que pierde el lease hace `step_down`. |
 | Dos NCT sellan ventanas distintas con el mismo `previous_hash` | CAS Lua en `append_block`: `LINDEX chain -1 == previous_hash` antes de `HSET+RPUSH`; el segundo NCT obtiene `False` y aborta. |
 | Dos `primary` arrancan juntos | SETNX: solo uno adquiere; el otro arranca follower. |
@@ -573,9 +577,11 @@ gana, que es exactamente la filosofía de toda la red VoxChain.
 | Reentrega de un mensaje ya procesado | Sets de idempotencia (`_solved` en worker/pool); el NCT re-verifica todo. |
 | Dos pool-coordinators compiten al morir el líder | Elección Bully por PoW: seed compartido + `SET NX pool:election:{epoch}` en Redis; solo uno puede ganar el claim atómico. |
 
-**Nota honesta:** `elect_acquire_leadership` es GET+SET (no atómico). La
-atomicidad efectiva la dan el backoff del PoW (en condiciones normales solo un
-candidato llega ahí) y el margen temporal corto. Está documentado como tal.
+**Nota honesta:** `elect_acquire_leadership` es GET+SET (no atómico a nivel Redis).
+La atomicidad efectiva la da el `dead_threshold`: en condiciones normales solo un
+candidato tiene el TTL del lease caído lo suficientemente bajo para pasar el
+check, y el margen temporal entre GET y SET es de microsegundos. Está documentado
+como tal.
 
 ---
 
@@ -637,7 +643,7 @@ candidato llega ahí) y el margen temporal corto. Está documentado como tal.
 
 | Componente que cae | Impacto inmediato | Recuperación | ¿Corrompe la cadena? |
 |---|---|---|---|
-| **NCT líder** | Se detiene el avance de ventanas | Elección Bully por PoW; nuevo líder en ~12-15 s | No (guard en Redis) |
+| **NCT líder** | Se detiene el avance de ventanas | Failover por lease Redis (`elect_acquire_leadership`); nuevo líder en ≤HEARTBEAT_TIMEOUT (12 s) | No (guard en Redis) |
 | **NCT primario reinicia** | Ninguno si hay standby | Arranca como follower | No |
 | **Partición NCT (split-brain)** | Solapamiento ≤3 s; posible pérdida de ventana | `step_down` por `renew_leadership`; CAS en `append_block` evita fork | No (CAS garantiza cadena lineal) |
 | **Redis** | Sistema se detiene (seguro) | StatefulSet + PVC; readquiere lease al volver | No (idempotencia) |
@@ -674,7 +680,8 @@ no son descuidos.
    propiedad de que un reinicio no duplica bloques, pero sigue siendo el SPOF del
    estado.
 6. **`elect_acquire_leadership` no es estrictamente atómico** (GET+SET); la
-   atomicidad real la aporta el backoff del PoW.
+   atomicidad práctica la aportan el `dead_threshold` y el margen temporal
+   mínimo entre operaciones.
 
 ---
 
@@ -686,6 +693,7 @@ asíncrona** (RabbitMQ con colas y topics), **consenso y tolerancia a fallos**
 (Bully por esfuerzo, leases en Redis, cierre atómico), **persistencia
 distribuida** (Redis + esquema de cadena), y **despliegue cloud-native**
 (Kubernetes, IaC, CI/CD, autoescalado y observabilidad). La elección de "gobierno
-por PoW" en vez de "transferencias de dinero" es el giro original que ata todo:
-la misma prueba de esfuerzo que protege la cadena es la que elige al coordinador
-cuando cae — el Bully mejorado que da origen al proyecto.
+por PoW" en vez de "transferencias de dinero" es el giro original que ata todo.
+El Bully mejorado se aplica donde realmente importa — en el Pool Coordinator,
+donde la GPU da ventaja real al nodo más potente — y el NCT usa failover por
+lease Redis, más simple y suficiente para nodos homogéneos en GCP.
