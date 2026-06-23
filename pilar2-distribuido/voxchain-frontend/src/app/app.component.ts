@@ -24,6 +24,9 @@ import { IdentityService } from './core/services/identity.service';
       <span *ngIf="identityService.identity() as id" class="identity-badge">
         {{ identityService.getPubkeyShort() }}
       </span>
+      <button mat-button *ngIf="identityService.identity()" (click)="logout()" class="logout-btn">
+        X
+      </button>
     </mat-toolbar>
     <router-outlet></router-outlet>
   `,
@@ -53,8 +56,20 @@ import { IdentityService } from './core/services/identity.service';
       border-radius: 12px;
       margin-left: 10px;
     }
+    .logout-btn {
+      min-width: 32px !important;
+      padding: 0 8px !important;
+      margin-left: 10px;
+      font-weight: bold;
+      font-size: 1.1rem;
+      line-height: 1;
+    }
   `]
 })
 export class AppComponent {
   identityService = inject(IdentityService);
+
+  logout() {
+    this.identityService.clearIdentity();
+  }
 }
