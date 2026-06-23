@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 from datetime import datetime, timezone
+from typing import Optional
 
 from common.blockchain import ACTION_PROMULGACION, compress_text
 from common.messaging import build_rabbitmq
@@ -24,16 +25,17 @@ class RabbitMQPublisher:
         text: str,
         action: str = ACTION_PROMULGACION,
         law_id: Optional[str] = None,
+        text_hash: Optional[str] = None,
+        created_at: Optional[str] = None,
+        signature: Optional[str] = None,
     ) -> dict:
         """Publish a law proposal to the RabbitMQ queue.
 
-        Replicates the logic from scripts/propose_law.py:
-        - Calculate SHA-256 of the text
-        - Compress the text
-        - Generate law_id if not provided
-        - Publish to the 'propuestas' queue
+        Forwards the client-signed fields (text_hash, created_at, signature) so the
+        NCT can re-verify the signature authoritatively (A-01). For legacy/unsigned
+        proposals these are derived server-side, preserving the previous behaviour.
         """
-        text_hash = hashlib.sha256(text.encode()).hexdigest()
+        text_hash = text_hash or hashlib.sha256(text.encode()).hexdigest()
         text_compressed = compress_text(text)
         text_original_len = len(text)
 
@@ -43,10 +45,12 @@ class RabbitMQPublisher:
             "text_hash": text_hash,
             "text_compressed": text_compressed,
             "text_original_len": text_original_len,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": created_at or datetime.now(timezone.utc).isoformat(),
             "action": action,
             "status": "pending_queue",
         }
+        if signature:
+            law["signature"] = signature
 
         self.messaging.publish_proposal(law)
         return law

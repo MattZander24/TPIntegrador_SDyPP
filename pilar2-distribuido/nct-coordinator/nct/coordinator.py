@@ -26,6 +26,7 @@ from common.blockchain import (
     verify_nonce,
 )
 from common.blockchain.challenge import VALID_ACTIONS
+from common.identity import proposal_message, verify
 from common.messaging import QUEUE_PROPUESTAS, QUEUE_RESPUESTA_NONCE
 from common.storage import LawStatus, WindowResult
 from common.metrics import (
@@ -48,7 +49,8 @@ class NCTCoordinator:
                  window_seconds_promulgacion: int, window_seconds_derogacion: int,
                  cooldown_new: int, cooldown_reproposed: int, clock=time.time,
                  nct_id: str = "nct", is_leader: bool = True,
-                 heartbeat_interval: float = 0.0, on_stepdown=None):
+                 heartbeat_interval: float = 0.0, on_stepdown=None,
+                 require_signatures: bool = False, proposal_max_age: int = 0):
         self.m = messaging
         self.store = store
         self.n_zeros = n_zeros
@@ -62,6 +64,10 @@ class NCTCoordinator:
         self.nct_id = nct_id
         self.is_leader = is_leader
         self.heartbeat_interval = heartbeat_interval
+        # Firma de propuestas (A-01, AGENT.md 3.1). require_signatures=False permite
+        # migración gradual: verifica si hay firma pero acepta no firmadas.
+        self.require_signatures = require_signatures
+        self.proposal_max_age = proposal_max_age
         # Callback invocado al ceder el liderazgo: lo usa el monitor para
         # activarse y empezar a observar heartbeats del nuevo líder.
         self._on_stepdown = on_stepdown
@@ -116,6 +122,10 @@ class NCTCoordinator:
             log.warning("propuesta con action inválida: %s", action)
             return
 
+        # Firma del autor (A-01 / AGENT.md 3.1): nadie propone en nombre de otro.
+        if not self._signature_ok(law, author, action, text_hash, law_id, created_at):
+            return
+
         # Cooldown del autor (3.4): no puede proponer mientras esté en cooldown.
         if self.store.is_in_cooldown(author):
             cd = self.store.get_cooldown(author)
@@ -133,6 +143,40 @@ class NCTCoordinator:
                                        text_compressed, text_original_len)
 
         self.maybe_open_window()
+
+    def _signature_ok(self, law: dict, author: str, action: str, text_hash: str,
+                      law_id: str, created_at: str) -> bool:
+        """Valida la firma ECDSA de la propuesta contra ``author`` (A-01).
+
+        - ``require_signatures=False``: si no hay firma, se acepta y se loguea
+          (migración); si la hay, debe ser válida.
+        - ``require_signatures=True``: rechaza toda propuesta sin firma válida.
+        - Anti-replay: si ``proposal_max_age`` > 0, ``created_at`` no puede estar
+          fuera de esa ventana respecto del reloj del NCT.
+        """
+        signature = law.get("signature")
+        if not signature:
+            if self.require_signatures:
+                log.warning("propuesta rechazada: sin firma (autor %s)", author[:12])
+                return False
+            log.info("propuesta sin firma aceptada (migración, autor %s)", author[:12])
+            return True
+        msg = proposal_message(author, action, text_hash, law_id, created_at)
+        if not verify(author, msg, signature):
+            log.warning("propuesta rechazada: firma inválida (autor %s)", author[:12])
+            return False
+        if self.proposal_max_age > 0 and not self._created_at_fresh(created_at):
+            log.warning("propuesta rechazada: created_at fuera de ventana (autor %s)",
+                        author[:12])
+            return False
+        return True
+
+    def _created_at_fresh(self, created_at: str) -> bool:
+        try:
+            ts = datetime.fromisoformat(created_at).timestamp()
+        except (ValueError, TypeError):
+            return False
+        return abs(self.now() - ts) <= self.proposal_max_age
 
     def _enqueue_promulgacion(self, law_id, author, text_hash, created_at,
                               text_compressed="", text_original_len=0) -> None:

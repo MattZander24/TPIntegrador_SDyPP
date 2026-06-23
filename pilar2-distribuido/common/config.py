@@ -18,6 +18,13 @@ def get_int(name: str, default: int) -> int:
     return int(raw) if raw not in (None, "") else default
 
 
+def get_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw in (None, ""):
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
 # Infraestructura
 RABBITMQ_URL = get("RABBITMQ_URL", "amqp://guest:guest@rabbitmq:5672/")
 REDIS_URL = get("REDIS_URL", "redis://redis:6379/0")
@@ -41,6 +48,15 @@ FRAGMENT_SIZE = get_int("FRAGMENT_SIZE", 1_000_000)
 
 # TLS para AMQPS (Pilar 3 — workers GPU externos)
 RABBITMQ_TLS_CA_PATH = get("RABBITMQ_TLS_CA_PATH", "")
+
+# Identidad / firmas (A-01, AGENT.md 3.1): cada propuesta debe venir firmada por
+# la clave privada del autor y el NCT/API verifican la firma contra author_pubkey.
+# Migración: arrancar en False (verifica si hay firma, acepta no firmadas y loguea)
+# y pasar a True una vez que todos los productores firman (rechazo duro).
+REQUIRE_SIGNATURES = get_bool("REQUIRE_SIGNATURES", False)
+# Ventana máxima de antigüedad de created_at para aceptar una propuesta firmada
+# (anti-replay). 0 = sin chequeo de frescura.
+PROPOSAL_MAX_AGE_SECONDS = get_int("PROPOSAL_MAX_AGE_SECONDS", 300)
 
 # Health endpoints
 # Pool

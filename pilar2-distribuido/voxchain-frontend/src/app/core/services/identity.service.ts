@@ -47,9 +47,47 @@ export class IdentityService {
     return identity;
   }
 
+  /**
+   * Firma un mensaje con la clave privada local (ECDSA P-256 / SHA-256).
+   * La privada nunca sale del navegador (AGENT.md 3.1): se importa, firma y descarta.
+   * Devuelve la firma cruda (P1363, r||s) en base64, el formato que verifica el backend.
+   */
+  async sign(message: string): Promise<string> {
+    const id = this.identity();
+    if (!id) throw new Error('no identity');
+    const key = await crypto.subtle.importKey(
+      'pkcs8',
+      this.base64ToArrayBuffer(id.exportedPrivkey),
+      { name: 'ECDSA', namedCurve: 'P-256' },
+      false,
+      ['sign']
+    );
+    const sig = await crypto.subtle.sign(
+      { name: 'ECDSA', hash: 'SHA-256' },
+      key,
+      new TextEncoder().encode(message)
+    );
+    return this.arrayBufferToBase64(sig);
+  }
+
+  /** SHA-256 del texto en hex (debe coincidir con hashlib.sha256 del backend). */
+  async sha256Hex(text: string): Promise<string> {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(digest))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  }
+
   clearIdentity() {
     localStorage.removeItem(this.storageKey);
     this.identity.set(null);
+  }
+
+  private base64ToArrayBuffer(b64: string): ArrayBuffer {
+    const binary = atob(b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes.buffer;
   }
 
   getPubkeyShort(): string {

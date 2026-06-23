@@ -166,17 +166,26 @@ export class ProposeLawComponent {
     this.success.set('');
 
     try {
+      const text = this.action === 'derogacion' ? '' : this.text();
+      const law_id = this.action === 'derogacion'
+        ? this.lawIdToRepeal
+        : `ley-${crypto.randomUUID().slice(0, 8)}`;
+      const text_hash = await this.identityService.sha256Hex(text);
+      const created_at = new Date().toISOString();
+
+      // Mensaje canónico: debe coincidir byte a byte con proposal_message() del backend.
+      const message = `${id.pubkey}|${this.action}|${text_hash}|${law_id}|${created_at}`;
+      const signature = await this.identityService.sign(message);
+
       const payload: any = {
         author_pubkey: id.pubkey,
         action: this.action,
+        law_id,
+        text,
+        text_hash,
+        created_at,
+        signature,
       };
-
-      if (this.action === 'derogacion') {
-        payload.law_id = this.lawIdToRepeal;
-        payload.text = '';
-      } else {
-        payload.text = this.text();
-      }
 
       const result = await firstValueFrom(this.apiService.proposeLaw(payload));
       this.success.set(result?.law_id ?? 'unknown');

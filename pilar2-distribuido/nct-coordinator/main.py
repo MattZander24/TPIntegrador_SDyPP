@@ -65,6 +65,8 @@ def main() -> None:
         nct_id=config.NCT_ID,
         is_leader=is_leader_now,
         heartbeat_interval=config.HEARTBEAT_INTERVAL,
+        require_signatures=config.REQUIRE_SIGNATURES,
+        proposal_max_age=config.PROPOSAL_MAX_AGE_SECONDS,
         # on_stepdown se conecta después de crear el monitor (ver abajo).
     )
 

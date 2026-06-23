@@ -50,6 +50,13 @@ class LawProposalRequest(BaseModel):
     author_pubkey: str
     text: str
     action: str = "promulgacion"
+    # Campos firmados por el cliente (A-01). El cliente calcula text_hash/created_at
+    # y firma `author_pubkey|action|text_hash|law_id|created_at`. Si vienen, el API
+    # verifica la firma y que text_hash == sha256(text); si no, usa el camino legacy
+    # (server-side) salvo que REQUIRE_SIGNATURES esté activo.
+    text_hash: Optional[str] = None
+    created_at: Optional[str] = None
+    signature: Optional[str] = None
 
 
 class HealthResponse(BaseModel):

@@ -15,4 +15,8 @@ export interface LawProposalRequest {
   author_pubkey: string;
   text: string;
   action: string;
+  // Campos firmados por el cliente (A-01). El backend verifica la firma.
+  text_hash?: string;
+  created_at?: string;
+  signature?: string;
 }
