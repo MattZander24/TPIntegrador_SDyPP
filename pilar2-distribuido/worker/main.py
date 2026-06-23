@@ -26,7 +26,6 @@ from worker_pkg.miner import _gpu_available, run_miner
 from worker_pkg.pool_worker import PoolWorker
 from worker_pkg.pool_coordinator import PoolCoordinator
 from worker_pkg.standalone_worker import StandaloneWorker
-from worker_pkg.worker import Worker
 import logging
 log = logging.getLogger("worker")
 

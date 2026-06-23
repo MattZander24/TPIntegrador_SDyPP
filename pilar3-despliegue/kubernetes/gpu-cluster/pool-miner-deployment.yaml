@@ -16,7 +16,7 @@ spec:
       terminationGracePeriodSeconds: 10
       containers:
         - name: pool-miner
-          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker:a7ac6d2
+          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker:41d2b81-v3
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
