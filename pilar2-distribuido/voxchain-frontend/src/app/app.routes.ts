@@ -9,5 +9,6 @@ export const routes: Routes = [
   { path: 'identity', loadComponent: () => import('./features/identity/identity.component').then(m => m.IdentityComponent) },
   { path: 'propose', loadComponent: () => import('./features/propose-law/propose-law.component').then(m => m.ProposeLawComponent) },
   { path: 'queue', loadComponent: () => import('./features/queue/queue.component').then(m => m.QueueComponent) },
+  { path: 'workers', loadComponent: () => import('./features/workers/workers.component').then(m => m.WorkersComponent) },
   { path: '**', redirectTo: '/dashboard' }
 ];

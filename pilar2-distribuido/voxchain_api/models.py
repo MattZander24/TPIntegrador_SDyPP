@@ -56,6 +56,32 @@ class HealthResponse(BaseModel):
     api: str
     nct: str
     redis: str
+    workers: str = "unknown"
+
+
+class WorkerStatus(BaseModel):
+    worker_id: str
+    mode: str
+    pool_url: str = ""
+    running: bool
+
+
+class WorkerSwitchRequest(BaseModel):
+    target: str
+    pool_url: str = ""
+
+
+class PoolPolicy(BaseModel):
+    decision: str
+    action: str | None = None
+    law_id: str | None = None
+
+
+class PoolHealth(BaseModel):
+    pool: str
+    rabbitmq: str
+    miners: int
+    voting_policy: dict
 
 
 class SSEEvent(BaseModel):

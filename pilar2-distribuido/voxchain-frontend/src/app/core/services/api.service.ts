@@ -1,5 +1,5 @@
 import { Injectable } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { Block } from '../models/block.model';
 import { Law, LawProposalRequest } from '../models/law.model';
@@ -10,6 +10,7 @@ import { Window } from '../models/window.model';
 })
 export class ApiService {
   private apiUrl = '/api';
+  private ownerId = 'default'; // In production, this should come from auth
 
   constructor(private http: HttpClient) {}
 
@@ -60,5 +61,28 @@ export class ApiService {
   // Health endpoint
   getHealth(): Observable<any> {
     return this.http.get(`${this.apiUrl}/health`);
+  }
+
+  // Workers endpoints
+  getWorkersStatus(): Observable<any[]> {
+    return this.http.get<any[]>(`${this.apiUrl}/workers/status`);
+  }
+
+  getWorkerStatus(workerId: string): Observable<any> {
+    return this.http.get(`${this.apiUrl}/workers/${workerId}/status`);
+  }
+
+  switchWorkerMode(workerId: string, request: any): Observable<any> {
+    const headers = new HttpHeaders().set('X-Owner-Id', this.ownerId);
+    return this.http.post(`${this.apiUrl}/workers/${workerId}/switch-mode`, request, { headers });
+  }
+
+  getPoolHealth(poolId: string): Observable<any> {
+    return this.http.get(`${this.apiUrl}/workers/pool/${poolId}/health`);
+  }
+
+  setPoolPolicy(poolId: string, policy: any): Observable<any> {
+    const headers = new HttpHeaders().set('X-Owner-Id', this.ownerId);
+    return this.http.post(`${this.apiUrl}/workers/pool/${poolId}/policy`, policy, { headers });
   }
 }

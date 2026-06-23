@@ -30,12 +30,12 @@ import { ApiService } from '../../core/services/api.service';
           </mat-card-content>
         </mat-card>
 
-        <mat-card [class.status-ok]="health().trp === 'ok'" [class.status-error]="health().trp !== 'ok'">
+        <mat-card [class.status-ok]="health().workers === 'ok'" [class.status-error]="health().workers !== 'ok'">
           <mat-card-header>
-            <mat-card-title>Transaction Pool</mat-card-title>
+            <mat-card-title>Workers</mat-card-title>
           </mat-card-header>
           <mat-card-content>
-            <p class="status">{{ health().trp }}</p>
+            <p class="status">{{ health().workers }}</p>
           </mat-card-content>
         </mat-card>
 
@@ -86,7 +86,7 @@ import { ApiService } from '../../core/services/api.service';
 })
 export class HealthComponent implements OnInit, OnDestroy {
   private apiService = inject(ApiService);
-  health = signal<any>({ api: 'loading', nct: 'loading', trp: 'loading', redis: 'loading' });
+  health = signal<any>({ api: 'loading', nct: 'loading', workers: 'loading', redis: 'loading' });
   private healthInterval: ReturnType<typeof setInterval> | null = null;
 
   ngOnInit() {

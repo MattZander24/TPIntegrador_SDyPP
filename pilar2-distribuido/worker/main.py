@@ -26,9 +26,6 @@ from worker_pkg.miner import _gpu_available, run_miner
 from worker_pkg.pool_worker import PoolWorker
 from worker_pkg.pool_coordinator import PoolCoordinator
 from worker_pkg.standalone_worker import StandaloneWorker
-from worker_pkg.worker import Worker
-import logging
-log = logging.getLogger("worker")
 
 log = logging.getLogger("voxchain.worker")
 
@@ -46,14 +43,19 @@ class WorkerManager:
         self._pool_url = ""
         self._pool_httpd = None
         self._stop_event = threading.Event()
+        self._pool_http_port = int(os.getenv("POOL_HTTP_PORT", "9001"))
 
     # -- API pública para admin_server --
 
     def get_status(self) -> dict:
+        # For pool-coordinator, show its own listening URL
+        pool_url = self._pool_url
+        if self._mode == "pool-coordinator":
+            pool_url = f"http://{self.worker_id}:{self._pool_http_port}"
         return {
             "mode": self._mode,
             "worker_id": self.worker_id,
-            "pool_url": self._pool_url,
+            "pool_url": pool_url,
             "running": self._thread is not None and self._thread.is_alive(),
         }
 

@@ -16,7 +16,7 @@ from prometheus_client import exposition
 from common.metrics import api_http_request_duration_seconds, api_http_requests_total
 
 from voxchain_api.config import config
-from voxchain_api.routers import chain, health, laws, windows
+from voxchain_api.routers import chain, health, laws, windows, workers
 from voxchain_api.services.redis_reader import RedisReader
 
 # Lifespan manager for SSE background task
@@ -82,6 +82,7 @@ app.include_router(chain.router)
 app.include_router(laws.router)
 app.include_router(windows.router)
 app.include_router(health.router)
+app.include_router(workers.router)
 
 
 async def sse_polling_task(app: FastAPI):

@@ -75,7 +75,7 @@ services:
       HEARTBEAT_TIMEOUT: "12"
       LEADER_LEASE_TTL: "15"
 
-  worker:
+  worker-1:
     build:
       context: ..
       dockerfile: pilar2-distribuido/worker/Dockerfile
@@ -86,8 +86,24 @@ services:
       <<: *app-env
       WORKER_MODE: "standalone"
       WORKER_CAPACITY: "1"
-    deploy:
-      replicas: 2
+      WORKER_ID: "worker-1"
+    ports:
+      - "9091:9090"
+
+  worker-2:
+    build:
+      context: ..
+      dockerfile: pilar2-distribuido/worker/Dockerfile
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      <<: *app-env
+      WORKER_MODE: "standalone"
+      WORKER_CAPACITY: "1"
+      WORKER_ID: "worker-2"
+    ports:
+      - "9092:9090"
 
   worker-pool-coordinator:
     build:
@@ -104,6 +120,7 @@ services:
       WORKER_ID: "pool-coordinator-1"
       POOL_HTTP_PORT: "9001"
     ports:
+      - "9090:9090"   # Admin server para hot-switch
       - "9001:9001"   # HTTP para pool-workers
 
   voxchain-api:
