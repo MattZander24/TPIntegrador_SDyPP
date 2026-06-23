@@ -32,7 +32,6 @@ spec:
       labels:
         app: worker-standalone
     spec:
-      serviceAccountName: worker
       terminationGracePeriodSeconds: 10
       containers:
         - name: worker
@@ -116,7 +115,6 @@ spec:
       labels:
         app: worker-pool-coordinator
     spec:
-      serviceAccountName: worker
       terminationGracePeriodSeconds: 10
       containers:
         - name: worker
@@ -221,7 +219,6 @@ spec:
       labels:
         app: worker-pool-miner-1
     spec:
-      serviceAccountName: worker
       terminationGracePeriodSeconds: 10
       containers:
         - name: worker
@@ -307,7 +304,6 @@ spec:
       labels:
         app: worker-pool-miner-2
     spec:
-      serviceAccountName: worker
       terminationGracePeriodSeconds: 10
       containers:
         - name: worker
@@ -393,7 +389,6 @@ spec:
       labels:
         app: worker-pool-miner-3
     spec:
-      serviceAccountName: worker
       terminationGracePeriodSeconds: 10
       containers:
         - name: worker
