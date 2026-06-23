@@ -411,21 +411,34 @@ Redis es la **fuente de verdad** y un **punto único de fallo** del estado.
   más (o vencen si `n` es alto), lo cual es el comportamiento esperado.
 
 ### 8.9 Se cae el Pool Coordinator
-- **Liderazgo de pool:** el Pool Coordinator también usa un **lease en Redis**
-  (`pool:leader`, TTL 10 s). Solo el líder consume la cola `tareas_trp` y emite
-  keep-alives. Si el líder cae, otra réplica adquiere el lease en su próximo
-  `tick()` y toma el relevo.
-- **Miners conectados:** los pool-miners hacen polling HTTP; si el coordinator no
-  responde, reintentan (`request_work` devuelve `None` → esperan y reintentan).
-- **Efecto:** la facción "pool" pierde temporalmente su capacidad agregada, pero
-  los workers standalone y otros pools siguen compitiendo por la ventana.
+- **Liderazgo de pool:** el Pool Coordinator usa un **lease en Redis**
+  (`pool:leader`, TTL 10 s). Cada réplica llama a `tick()` cada ~1 s (cableado
+  en `main.py` como `start_consuming(tick=pc.tick, ...)`). Solo el líder emite
+  keep-alives al NCT. Si el líder cae, el lease expira en ≤10 s; la réplica
+  sobreviviente lo adquiere en su siguiente `tick()` y toma el relevo.
+- **Auto-minería:** cada réplica tiene su propio `_auto_mine_loop` corriendo en
+  paralelo. Como ambas reciben el desafío del topic `desafio_activo` y fragmentan
+  en su propia `_pending_fragments`, el pod sobreviviente **ya tiene el trabajo
+  en memoria** y sigue minando sin interrupción.
+- **Pool-miners conectados:** al caer el pod, los miners que le hacían HTTP
+  polling detectan el fallo en el siguiente heartbeat:
+  - Si el coordinator **responde `ok:false`** (pod sobreviviente vía el Service
+    de Kubernetes, que no conoce el `miner_id` del pod caído) → el miner resetea
+    `_registered = False` y **se re-registra automáticamente** ante la réplica
+    activa (`pool_worker.py`, loop de re-registro).
+  - Si el coordinator **no responde** (HTTP falla mientras se reprograma el pod)
+    → el miner espera y reintenta; **no se re-registra** en falso, evita perder
+    el `miner_id` con un coordinator que vuelve.
+- **Efecto neto:** la facción "pool" pierde capacidad durante ≤10 s (tiempo del
+  lease) + el tiempo de re-registro de los miners (~10-15 s). Los workers
+  standalone y otros pools siguen compitiendo durante ese hueco.
 
 ### 8.10 Se cae un Pool Miner
 - Es un cliente HTTP puro. Si cae, el Pool Coordinator lo detecta porque deja de
   recibir su heartbeat (`KEEPALIVE_TTL` = 15 s) y lo **purga** de la lista de
   miners frescos. El rango que tenía asignado simplemente no se completa, pero
   el coordinator reparte el trabajo entre los miners que quedan vivos.
-- Al volver, el pool-miner se **re-registra** (reintenta cada 5 s hasta lograrlo).
+- Al volver, el pool-miner intenta registrarse en bucle (cada 5 s) hasta lograrlo.
 
 ### 8.11 Se cae la voxchain-api
 - **Efecto:** el frontend no puede proponer leyes ni leer estado; se cortan los
@@ -593,8 +606,8 @@ candidato llega ahí) y el margen temporal corto. Está documentado como tal.
 | **Transaction Pool** | Ventana puede vencer | Réplicas + HPA; stateless | No |
 | **Worker** | Menos throughput | KEDA/HPA levanta otros; fragmentos redundantes | No |
 | **Sin GPU** | Ventanas más lentas | Escalado CPU (Pilar 3); dificultad NO baja | No |
-| **Pool Coordinator** | Pool pierde capacidad | Lease `pool:leader`; otra réplica toma | No |
-| **Pool Miner** | Menos capacidad del pool | Purga por keep-alive; re-registro | No |
+| **Pool Coordinator** | Pool pierde capacidad ≤10 s | Lease `pool:leader` (tick activo); otra réplica toma; miners se re-registran solos | No |
+| **Pool Miner** | Menos capacidad del pool | Purga por keep-alive (15 s); re-registro automático al volver | No |
 | **voxchain-api** | Frontend sin servicio | Réplicas + HPA; consenso sigue | No |
 | **Frontend** | UI caída | Estático, sin impacto backend | No |
 | **Minero GPU** | — | Fallback automático a CPU | No |
