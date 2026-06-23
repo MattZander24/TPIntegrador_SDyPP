@@ -210,3 +210,75 @@ class TestPoolCoordinator:
         ok = coordinator.renew_leadership()
         assert ok is False
         assert coordinator.is_leader is False
+
+
+class TestPoolWorkerReregistration:
+    """Verifica que el pool-worker se re-registra cuando el coordinator lo pierde."""
+
+    def _make_worker(self, post_side_effect):
+        from worker_pkg.pool_worker import PoolWorker
+
+        calls = {"register": 0}
+
+        def fake_mine(*a):
+            return (None, None)
+
+        worker = PoolWorker(
+            "http://coordinator:9001",
+            miner_id="",
+            mine=fake_mine,
+        )
+
+        def fake_register():
+            calls["register"] += 1
+            worker.miner_id = f"miner-{calls['register']}"
+            worker._registered = True
+            return True
+
+        worker.register = fake_register
+        worker._post = post_side_effect
+        worker._get = lambda path: None
+        return worker, calls
+
+    def test_reregistra_cuando_heartbeat_dice_desconocido(self):
+        """Si el coordinator responde ok:false, el worker se re-registra."""
+        responses = iter([
+            {"ok": False},   # heartbeat 1 → coordinator no conoce al miner
+            {"ok": True},    # heartbeat 2 → ya re-registrado
+        ])
+
+        iteration = {"n": 0}
+
+        def fake_post(path, data):
+            if "/heartbeat" in path:
+                resp = next(responses, {"ok": True})
+                iteration["n"] += 1
+                if iteration["n"] >= 2:
+                    worker._running = False  # detener tras segunda iteración
+                return resp
+            return None
+
+        worker, calls = self._make_worker(fake_post)
+        worker.heartbeat_interval = 0  # forzar heartbeat en cada tick
+
+        worker.run()
+
+        assert calls["register"] == 2  # se registró dos veces
+
+    def test_no_reregistra_cuando_coordinator_esta_caido(self):
+        """Si el HTTP falla (resp None), el worker espera sin re-registrarse."""
+        tick = {"n": 0}
+
+        def fake_post(path, data):
+            if "/heartbeat" in path:
+                tick["n"] += 1
+                if tick["n"] >= 3:
+                    worker._running = False
+                return None  # coordinator caído → HTTP falla
+
+        worker, calls = self._make_worker(fake_post)
+        worker.heartbeat_interval = 0
+
+        worker.run()
+
+        assert calls["register"] == 1  # solo el registro inicial

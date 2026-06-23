@@ -105,9 +105,9 @@ class WorkerManager:
             self._messaging = m
         return self._messaging
 
-    def _run_messaging_loop(self):
+    def _run_messaging_loop(self, tick=None):
         try:
-            self._messaging.start_consuming(tick_interval=1.0)
+            self._messaging.start_consuming(tick=tick, tick_interval=1.0)
         except Exception:
             if not self._stop_event.is_set():
                 raise
@@ -168,7 +168,7 @@ class WorkerManager:
         pool_http_thread.start()
 
         self._thread = threading.Thread(
-            target=self._run_messaging_loop, daemon=True
+            target=self._run_messaging_loop, args=(pc.tick,), daemon=True
         )
         self._thread.start()
 

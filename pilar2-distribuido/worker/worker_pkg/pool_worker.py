@@ -104,36 +104,42 @@ class PoolWorker:
         return bool(resp and resp.get("ok", False))
 
     def run(self) -> None:
+        from common.blockchain.challenge import prefix_for_zeros
+
         log.info("pool-worker iniciando (coordinator=%s)", self.url)
         self._running = True
-        while self._running and not self._registered:
-            if self.register():
-                break
-            log.warning("reintentando registro en 5s...")
-            time.sleep(5)
 
         while self._running:
-            now = self.now()
-            if now - self._last_hb >= self.heartbeat_interval:
-                self._last_hb = now
-                self.heartbeat()
+            while self._running and not self._registered:
+                if self.register():
+                    break
+                log.warning("reintentando registro en 5s...")
+                time.sleep(5)
 
-            from common.blockchain.challenge import prefix_for_zeros
+            while self._running and self._registered:
+                now = self.now()
+                if now - self._last_hb >= self.heartbeat_interval:
+                    self._last_hb = now
+                    resp = self._post("/heartbeat", {"miner_id": self.miner_id})
+                    if resp is not None and not resp.get("ok", False):
+                        log.warning("coordinator no reconoce miner %s, re-registrando", self.miner_id)
+                        self._registered = False
+                        break
 
-            task = self.request_work()
-            if not task:
-                time.sleep(2)
-                continue
+                task = self.request_work()
+                if not task:
+                    time.sleep(2)
+                    continue
 
-            wid = task["voting_window_id"]
-            base = task["partial_hash_base"]
-            prefix = prefix_for_zeros(int(task.get("n_zeros_required", 4)))
-            rmin = int(task["range_min"])
-            rmax = int(task["range_max"])
+                wid = task["voting_window_id"]
+                base = task["partial_hash_base"]
+                prefix = prefix_for_zeros(int(task.get("n_zeros_required", 4)))
+                rmin = int(task["range_min"])
+                rmax = int(task["range_max"])
 
-            log.info("minando ventana %s rango [%d, %d)", wid, rmin, rmax)
-            nonce, hash_hex = self.mine(base, prefix, rmin, rmax)
+                log.info("minando ventana %s rango [%d, %d)", wid, rmin, rmax)
+                nonce, hash_hex = self.mine(base, prefix, rmin, rmax)
 
-            if nonce is not None:
-                self.submit_result(wid, nonce, hash_hex)
-                log.info("nonce %d enviado para ventana %s", nonce, wid)
+                if nonce is not None:
+                    self.submit_result(wid, nonce, hash_hex)
+                    log.info("nonce %d enviado para ventana %s", nonce, wid)
