@@ -8,173 +8,802 @@ metadata:
 data:
   voxchain-dashboard.json: |
     {
-      "__inputs": [],
-      "__requires": [],
-      "title": "VoxChain",
-      "uid": "voxchain",
-      "version": 1,
+      "__inputs": [
+        {
+          "name": "DS_PROMETHEUS",
+          "label": "Prometheus",
+          "type": "datasource",
+          "pluginId": "prometheus"
+        }
+      ],
+      "__requires": [
+        { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
+        { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" }
+      ],
+      "title": "VoxChain — Sistema Distribuido",
+      "uid": "voxchain-v2",
+      "version": 2,
       "timezone": "browser",
       "editable": true,
+      "refresh": "10s",
+      "time": { "from": "now-1h", "to": "now" },
+      "timepicker": {},
+      "tags": ["voxchain", "blockchain", "mining"],
+      "description": "Dashboard principal de VoxChain — NCT, TrP, Workers y Pool",
+
+      "templating": {
+        "list": [
+          {
+            "name": "worker_id",
+            "label": "Worker",
+            "type": "query",
+            "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+            "query": "label_values(voxchain_worker_busy, worker_id)",
+            "refresh": 2,
+            "multi": true,
+            "includeAll": true,
+            "allValue": ".*"
+          }
+        ]
+      },
+
       "panels": [
+
         {
-          "title": "Propuestas / seg",
+          "id": 1,
+          "title": "CONSENSO — NCT",
+          "type": "row",
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 }
+        },
+
+        {
+          "id": 2,
+          "title": "Propuestas recibidas (total)",
           "type": "stat",
-          "gridPos": {
-            "h": 4,
-            "w": 4,
-            "x": 0,
-            "y": 0
-          },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
           "targets": [
             {
-              "expr": "sum(rate(voxchain_nct_proposals_total{job=\"nct\"}[1m]))",
-              "legendFormat": "propuestas/s"
+              "expr": "sum(voxchain_nct_proposals_total)",
+              "legendFormat": "__auto"
             }
-          ]
+          ],
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "orientation": "auto",
+            "textMode": "auto",
+            "colorMode": "background",
+            "graphMode": "area"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "fixed", "fixedColor": "blue" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "value": null, "color": "blue" }
+                ]
+              },
+              "unit": "short",
+              "mappings": []
+            }
+          }
         },
+
         {
+          "id": 3,
           "title": "Bloques sellados",
           "type": "stat",
-          "gridPos": {
-            "h": 4,
-            "w": 4,
-            "x": 4,
-            "y": 0
-          },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
           "targets": [
             {
-              "expr": "sum(voxchain_nct_blocks_sealed_total{job=\"nct\"})",
-              "legendFormat": "bloques"
+              "expr": "sum(voxchain_nct_blocks_sealed_total)",
+              "legendFormat": "__auto"
             }
-          ]
+          ],
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "colorMode": "background",
+            "graphMode": "area"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "fixed", "fixedColor": "green" },
+              "unit": "short"
+            }
+          }
         },
+
         {
-          "title": "Workers activos",
+          "id": 4,
+          "title": "Ventanas abiertas",
           "type": "stat",
-          "gridPos": {
-            "h": 4,
-            "w": 4,
-            "x": 8,
-            "y": 0
-          },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
           "targets": [
             {
-              "expr": "sum(voxchain_pool_miners_registered)",
-              "legendFormat": "workers"
+              "expr": "sum(voxchain_nct_windows_opened_total) - sum(voxchain_nct_windows_closed_total)",
+              "legendFormat": "__auto"
             }
-          ]
+          ],
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "colorMode": "background",
+            "graphMode": "none"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "value": null, "color": "green" },
+                  { "value": 1, "color": "yellow" },
+                  { "value": 3, "color": "red" }
+                ]
+              },
+              "unit": "short"
+            }
+          }
         },
+
         {
-          "title": "NCT L\u00edder",
+          "id": 5,
+          "title": "NCT líder activo",
           "type": "stat",
-          "gridPos": {
-            "h": 4,
-            "w": 4,
-            "x": 12,
-            "y": 0
-          },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
           "targets": [
             {
-              "expr": "max(voxchain_nct_is_leader{job=\"nct\"})",
-              "legendFormat": "l\u00edder"
+              "expr": "max(voxchain_nct_is_leader)",
+              "legendFormat": "__auto"
             }
-          ]
+          ],
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "colorMode": "background",
+            "graphMode": "none",
+            "textMode": "value_and_name"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "value": null, "color": "red" },
+                  { "value": 1, "color": "green" }
+                ]
+              },
+              "unit": "short",
+              "mappings": [
+                { "options": { "0": { "text": "Sin líder" }, "1": { "text": "Elegido" } }, "type": "value" }
+              ]
+            }
+          }
         },
+
         {
+          "id": 6,
           "title": "Throughput de propuestas",
           "type": "timeseries",
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 0,
-            "y": 4
-          },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 5 },
           "targets": [
             {
-              "expr": "sum(rate(voxchain_nct_proposals_total{job=\"nct\"}[1m]))",
+              "expr": "sum(rate(voxchain_nct_proposals_total[1m]))",
               "legendFormat": "propuestas/s"
+            },
+            {
+              "expr": "sum(rate(voxchain_nct_blocks_sealed_total[1m]))",
+              "legendFormat": "bloques sellados/s"
             }
-          ]
-        },
-        {
-          "title": "Workers activos (hist\u00f3rico)",
-          "type": "timeseries",
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 4
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": {
+                "lineWidth": 2,
+                "fillOpacity": 10,
+                "spanNulls": false
+              }
+            }
           },
+          "options": {
+            "legend": { "displayMode": "list", "placement": "bottom" },
+            "tooltip": { "mode": "multi" }
+          }
+        },
+
+        {
+          "id": 7,
+          "title": "Ventanas abiertas vs cerradas",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 5 },
+          "targets": [
+            {
+              "expr": "sum(rate(voxchain_nct_windows_opened_total[1m]))",
+              "legendFormat": "ventanas abiertas/s"
+            },
+            {
+              "expr": "sum(rate(voxchain_nct_windows_closed_total[1m]))",
+              "legendFormat": "ventanas cerradas/s"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": { "lineWidth": 2, "fillOpacity": 8 }
+            }
+          },
+          "options": {
+            "legend": { "displayMode": "list", "placement": "bottom" },
+            "tooltip": { "mode": "multi" }
+          }
+        },
+
+        {
+          "id": 10,
+          "title": "MINERÍA — Workers",
+          "type": "row",
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 }
+        },
+
+        {
+          "id": 11,
+          "title": "Workers activos ahora",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 4, "x": 0, "y": 14 },
+          "targets": [
+            {
+              "expr": "sum(voxchain_trp_active_workers)",
+              "legendFormat": "__auto"
+            }
+          ],
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "colorMode": "background",
+            "graphMode": "area"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "value": null, "color": "red" },
+                  { "value": 1, "color": "yellow" },
+                  { "value": 2, "color": "green" }
+                ]
+              },
+              "unit": "short"
+            }
+          }
+        },
+
+        {
+          "id": 12,
+          "title": "Workers con GPU",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 4, "x": 4, "y": 14 },
+          "targets": [
+            {
+              "expr": "sum(voxchain_worker_has_gpu)",
+              "legendFormat": "__auto"
+            }
+          ],
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "colorMode": "background",
+            "graphMode": "none"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "fixed", "fixedColor": "purple" },
+              "unit": "short"
+            }
+          }
+        },
+
+        {
+          "id": 13,
+          "title": "Workers minando ahora",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 4, "x": 8, "y": 14 },
+          "targets": [
+            {
+              "expr": "sum(voxchain_worker_busy)",
+              "legendFormat": "__auto"
+            }
+          ],
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "colorMode": "background",
+            "graphMode": "area"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "value": null, "color": "blue" },
+                  { "value": 1, "color": "green" }
+                ]
+              },
+              "unit": "short"
+            }
+          }
+        },
+
+        {
+          "id": 14,
+          "title": "Tareas publicadas (TrP)",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 4, "x": 12, "y": 14 },
+          "targets": [
+            {
+              "expr": "sum(voxchain_trp_tasks_published_total)",
+              "legendFormat": "__auto"
+            }
+          ],
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "colorMode": "background",
+            "graphMode": "area"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "fixed", "fixedColor": "orange" },
+              "unit": "short"
+            }
+          }
+        },
+
+        {
+          "id": 15,
+          "title": "Nonces encontrados (total)",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 4, "x": 16, "y": 14 },
+          "targets": [
+            {
+              "expr": "sum(voxchain_worker_nonces_found_total)",
+              "legendFormat": "__auto"
+            }
+          ],
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "colorMode": "background",
+            "graphMode": "area"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "fixed", "fixedColor": "green" },
+              "unit": "short"
+            }
+          }
+        },
+
+        {
+          "id": 16,
+          "title": "Nonces/min por worker",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+          "targets": [
+            {
+              "expr": "rate(voxchain_worker_nonces_found_total{worker_id=~\"$worker_id\"}[1m]) * 60",
+              "legendFormat": "{{worker_id}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "lineWidth": 2, "fillOpacity": 10 }
+            }
+          },
+          "options": {
+            "legend": { "displayMode": "list", "placement": "bottom" },
+            "tooltip": { "mode": "multi" }
+          }
+        },
+
+        {
+          "id": 17,
+          "title": "Estado workers (ocupado vs libre)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+          "targets": [
+            {
+              "expr": "voxchain_worker_busy{worker_id=~\"$worker_id\"}",
+              "legendFormat": "{{worker_id}} — busy"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "max": 1,
+              "custom": { "lineWidth": 2, "fillOpacity": 20 },
+              "color": { "mode": "palette-classic" }
+            }
+          },
+          "options": {
+            "legend": { "displayMode": "list", "placement": "bottom" },
+            "tooltip": { "mode": "multi" }
+          }
+        },
+
+        {
+          "id": 18,
+          "title": "Tareas recibidas por worker",
+          "type": "bargauge",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 6, "w": 12, "x": 0, "y": 26 },
+          "targets": [
+            {
+              "expr": "sum by (worker_id) (voxchain_worker_tasks_received_total{worker_id=~\"$worker_id\"})",
+              "legendFormat": "{{worker_id}}"
+            }
+          ],
+          "options": {
+            "orientation": "horizontal",
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "displayMode": "gradient",
+            "showUnfilled": true
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": { "mode": "continuous-BlYlRd" }
+            }
+          }
+        },
+
+        {
+          "id": 20,
+          "title": "POOL — Coordinador y Mineros",
+          "type": "row",
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 }
+        },
+
+        {
+          "id": 21,
+          "title": "Miners en el pool",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 4, "x": 0, "y": 33 },
           "targets": [
             {
               "expr": "sum(voxchain_pool_miners_registered)",
-              "legendFormat": "workers"
+              "legendFormat": "__auto"
             }
-          ]
-        },
-        {
-          "title": "HTTP Requests por minuto",
-          "type": "timeseries",
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 0,
-            "y": 12
+          ],
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "colorMode": "background",
+            "graphMode": "area"
           },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "value": null, "color": "red" },
+                  { "value": 1, "color": "yellow" },
+                  { "value": 2, "color": "green" }
+                ]
+              },
+              "unit": "short"
+            }
+          }
+        },
+
+        {
+          "id": 22,
+          "title": "Pool — Nonces encontrados",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 4, "x": 4, "y": 33 },
+          "targets": [
+            {
+              "expr": "sum(voxchain_pool_nonces_found_total)",
+              "legendFormat": "__auto"
+            }
+          ],
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "colorMode": "background",
+            "graphMode": "area"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "fixed", "fixedColor": "green" },
+              "unit": "short"
+            }
+          }
+        },
+
+        {
+          "id": 23,
+          "title": "Pool — Sub-tareas distribuidas",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 4, "x": 8, "y": 33 },
+          "targets": [
+            {
+              "expr": "sum(voxchain_pool_work_distributed_total)",
+              "legendFormat": "__auto"
+            }
+          ],
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "colorMode": "background",
+            "graphMode": "area"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "fixed", "fixedColor": "orange" },
+              "unit": "short"
+            }
+          }
+        },
+
+        {
+          "id": 24,
+          "title": "Pool coordinator líder",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 4, "x": 12, "y": 33 },
+          "targets": [
+            {
+              "expr": "max(voxchain_pool_is_leader)",
+              "legendFormat": "__auto"
+            }
+          ],
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "colorMode": "background",
+            "graphMode": "none"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "value": null, "color": "red" },
+                  { "value": 1, "color": "green" }
+                ]
+              },
+              "unit": "short",
+              "mappings": [
+                { "options": { "0": { "text": "Sin líder" }, "1": { "text": "Activo" } }, "type": "value" }
+              ]
+            }
+          }
+        },
+
+        {
+          "id": 25,
+          "title": "Miners en pool (histórico)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 37 },
+          "targets": [
+            {
+              "expr": "sum(voxchain_pool_miners_registered)",
+              "legendFormat": "miners registrados"
+            },
+            {
+              "expr": "sum(voxchain_trp_active_workers)",
+              "legendFormat": "workers activos (TrP)"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "lineWidth": 2, "fillOpacity": 10 }
+            }
+          },
+          "options": {
+            "legend": { "displayMode": "list", "placement": "bottom" },
+            "tooltip": { "mode": "multi" }
+          }
+        },
+
+        {
+          "id": 26,
+          "title": "Nonces pool vs worker individual",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 37 },
+          "targets": [
+            {
+              "expr": "sum(rate(voxchain_pool_nonces_found_total[1m])) * 60",
+              "legendFormat": "pool — nonces/min"
+            },
+            {
+              "expr": "sum(rate(voxchain_worker_nonces_found_total[1m])) * 60",
+              "legendFormat": "standalone — nonces/min"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": { "lineWidth": 2, "fillOpacity": 8 }
+            }
+          },
+          "options": {
+            "legend": { "displayMode": "list", "placement": "bottom" },
+            "tooltip": { "mode": "multi" }
+          }
+        },
+
+        {
+          "id": 30,
+          "title": "API — Gateway",
+          "type": "row",
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 45 }
+        },
+
+        {
+          "id": 31,
+          "title": "Requests/s al API",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 4, "x": 0, "y": 46 },
           "targets": [
             {
               "expr": "sum(rate(voxchain_api_http_requests_total[1m]))",
-              "legendFormat": "requests/min"
+              "legendFormat": "__auto"
             }
-          ]
-        },
-        {
-          "title": "Latencia HTTP (p99)",
-          "type": "timeseries",
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 12
+          ],
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "colorMode": "background",
+            "graphMode": "area"
           },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "fixed", "fixedColor": "blue" },
+              "unit": "reqps"
+            }
+          }
+        },
+
+        {
+          "id": 32,
+          "title": "Latencia p50 / p90 / p99",
+          "type": "stat",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 4, "w": 12, "x": 4, "y": 46 },
           "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum(rate(voxchain_api_http_request_duration_seconds_bucket[1m])) by (le))",
+              "legendFormat": "p50"
+            },
+            {
+              "expr": "histogram_quantile(0.90, sum(rate(voxchain_api_http_request_duration_seconds_bucket[1m])) by (le))",
+              "legendFormat": "p90"
+            },
             {
               "expr": "histogram_quantile(0.99, sum(rate(voxchain_api_http_request_duration_seconds_bucket[1m])) by (le))",
               "legendFormat": "p99"
             }
-          ]
-        },
-        {
-          "title": "Nonces encontrados por worker",
-          "type": "timeseries",
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 0,
-            "y": 20
+          ],
+          "options": {
+            "reduceOptions": { "calcs": ["lastNotNull"] },
+            "colorMode": "value",
+            "graphMode": "none",
+            "orientation": "horizontal"
           },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "color": { "mode": "thresholds" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "value": null, "color": "green" },
+                  { "value": 0.1, "color": "yellow" },
+                  { "value": 0.5, "color": "red" }
+                ]
+              }
+            }
+          }
+        },
+
+        {
+          "id": 33,
+          "title": "HTTP Requests/s por ruta",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 50 },
           "targets": [
             {
-              "expr": "sum(rate(voxchain_worker_nonces_found_total[1m]))",
-              "legendFormat": "nonces/min"
+              "expr": "sum by (path) (rate(voxchain_api_http_requests_total[1m]))",
+              "legendFormat": "{{path}}"
             }
-          ]
-        },
-        {
-          "title": "Worker ocupado",
-          "type": "timeseries",
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 20
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": { "lineWidth": 2, "fillOpacity": 8 }
+            }
           },
+          "options": {
+            "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "max"] },
+            "tooltip": { "mode": "multi" }
+          }
+        },
+
+        {
+          "id": 34,
+          "title": "Latencia HTTP (histograma p50/p90/p99)",
+          "type": "timeseries",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 50 },
           "targets": [
             {
-              "expr": "max(voxchain_worker_busy)",
-              "legendFormat": "{{worker_id}}"
+              "expr": "histogram_quantile(0.50, sum(rate(voxchain_api_http_request_duration_seconds_bucket[1m])) by (le))",
+              "legendFormat": "p50"
+            },
+            {
+              "expr": "histogram_quantile(0.90, sum(rate(voxchain_api_http_request_duration_seconds_bucket[1m])) by (le))",
+              "legendFormat": "p90"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(voxchain_api_http_request_duration_seconds_bucket[1m])) by (le))",
+              "legendFormat": "p99"
             }
-          ]
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": { "lineWidth": 2, "fillOpacity": 6 },
+              "color": { "mode": "palette-classic" }
+            }
+          },
+          "options": {
+            "legend": { "displayMode": "list", "placement": "bottom" },
+            "tooltip": { "mode": "multi" }
+          }
+        },
+
+        {
+          "id": 35,
+          "title": "Requests por método HTTP",
+          "type": "piechart",
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 58 },
+          "targets": [
+            {
+              "expr": "sum by (method) (voxchain_api_http_requests_total)",
+              "legendFormat": "{{method}}"
+            }
+          ],
+          "options": {
+            "pieType": "donut",
+            "displayLabels": ["name", "percent"],
+            "legend": { "displayMode": "table", "placement": "right", "calcs": ["value"] }
+          },
+          "fieldConfig": {
+            "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }
+          }
         }
       ]
     }
