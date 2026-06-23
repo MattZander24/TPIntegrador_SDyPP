@@ -47,7 +47,7 @@ spec:
                   name: redis-credentials
                   key: password
             - name: REDIS_URL
-              value: "redis://:$(REDIS_PASSWORD)@redis:6379/0"
+              value: "redis://:$(REDIS_PASSWORD)@redis-0.redis-headless.voxchain.svc.cluster.local:6379/0"
             - name: NCT_MODE
               value: "primary"
             - name: NCT_ID
@@ -63,8 +63,7 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 15
           readinessProbe:
-            httpGet:
-              path: /health
+            tcpSocket:
               port: 8080
             initialDelaySeconds: 5
-            periodSeconds: 10
+            periodSeconds: 5
