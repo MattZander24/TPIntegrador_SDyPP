@@ -1,11 +1,21 @@
-"""Tests de verificación de firma de propuestas en el NCT (A-01 / AGENT.md 3.1)."""
+"""Tests de verificación de firma de propuestas y nonces en el NCT (A-01)."""
+
+import hashlib
 
 import pytest
 
-from common.identity import proposal_message, public_key_b64, sign
+from common.identity import nonce_message, proposal_message, public_key_b64, sign
 from nct.coordinator import NCTCoordinator
 
 pytest.importorskip("cryptography", reason="requiere cryptography")
+
+
+def solve(base, n_zeros):
+    prefix = "0" * n_zeros
+    nonce = 0
+    while not hashlib.md5(f"{base}{nonce}".encode()).hexdigest().startswith(prefix):
+        nonce += 1
+    return nonce
 
 
 class Clock:
@@ -95,3 +105,51 @@ def test_created_at_obsoleto_rechazado_anti_replay(bus, store):
                             created_at="1970-01-01T00:00:00+00:00")
     bus.publish_proposal(prop)
     assert challenges == []
+
+
+def _open_window(bus, store):
+    """Abre una ventana con una propuesta firmada y devuelve el challenge."""
+    challenges = []
+    bus.on_challenge(challenges.append)
+    apriv, apub = _keypair()
+    bus.publish_proposal(_signed_proposal(apriv, apub))
+    return challenges[0], apub
+
+
+def test_nonce_firmado_valido_sella_bloque(bus, store):
+    make_nct(bus, store, Clock(), require_signatures=True)
+    ch, _author = _open_window(bus, store)
+    nonce = solve(ch["partial_hash_base"], ch["n_zeros_required"])
+    wpriv, wpub = _keypair()
+    sig = sign(wpriv, nonce_message(ch["voting_window_id"], nonce, wpub))
+    bus.publish_nonce_response({
+        "voting_window_id": ch["voting_window_id"], "nonce": nonce,
+        "winning_node_or_pool": wpub, "signature": sig,
+        "block_hash_candidato": "x",
+    })
+    assert store.chain_length() == 1
+
+
+def test_nonce_sin_firma_rechazado_si_require(bus, store):
+    make_nct(bus, store, Clock(), require_signatures=True)
+    ch, _author = _open_window(bus, store)
+    nonce = solve(ch["partial_hash_base"], ch["n_zeros_required"])
+    bus.publish_nonce_response({
+        "voting_window_id": ch["voting_window_id"], "nonce": nonce,
+        "winning_node_or_pool": "pool-sin-firma", "block_hash_candidato": "x",
+    })
+    assert store.chain_length() == 0
+
+
+def test_nonce_firma_invalida_rechazado(bus, store):
+    make_nct(bus, store, Clock(), require_signatures=False)
+    ch, _author = _open_window(bus, store)
+    nonce = solve(ch["partial_hash_base"], ch["n_zeros_required"])
+    wpriv, wpub = _keypair()
+    sig = sign(wpriv, nonce_message(ch["voting_window_id"], nonce, wpub))
+    bus.publish_nonce_response({
+        "voting_window_id": ch["voting_window_id"], "nonce": nonce,
+        "winning_node_or_pool": wpub, "signature": sig[:-4] + "AAAA",
+        "block_hash_candidato": "x",
+    })
+    assert store.chain_length() == 0

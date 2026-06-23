@@ -22,6 +22,7 @@ from common.logging_setup import setup_logging
 from common.messaging import build_rabbitmq
 from common.redis import create_redis
 from worker_pkg.admin_server import start_admin_server
+from worker_pkg.identity import WorkerSigner
 from worker_pkg.miner import _gpu_available, run_miner
 from worker_pkg.pool_worker import PoolWorker
 from worker_pkg.pool_coordinator import PoolCoordinator
@@ -35,9 +36,10 @@ log = logging.getLogger("voxchain.worker")
 class WorkerManager:
     """Gestiona el worker activo y permite hot-switch entre modos."""
 
-    def __init__(self, worker_id: str, has_gpu: bool):
+    def __init__(self, worker_id: str, has_gpu: bool, signer=None):
         self.worker_id = worker_id
         self.has_gpu = has_gpu
+        self.signer = signer
         self._messaging = None
         self._worker = None
         self._thread = None
@@ -131,6 +133,7 @@ class WorkerManager:
             m,
             worker_id=self.worker_id,
             mine=run_miner,
+            signer=self.signer,
         )
         sw.wire()
         self._worker = sw
@@ -149,6 +152,7 @@ class WorkerManager:
             redis=redis,
             mine=run_miner,
             capacity=config.get_int("WORKER_CAPACITY", 1),
+            signer=self.signer,
         )
         pc.wire()
         pc.start()
@@ -181,7 +185,8 @@ def main() -> None:
     pool_url = os.getenv("POOL_COORDINATOR_URL", "")
     log.info("iniciando %s modo=%s (gpu=%s)", worker_id, mode, has_gpu)
 
-    manager = WorkerManager(worker_id, has_gpu)
+    signer = WorkerSigner.from_env()
+    manager = WorkerManager(worker_id, has_gpu, signer=signer)
     manager.start(mode, pool_url)
 
     admin_port = int(os.getenv("ADMIN_PORT", "9090"))

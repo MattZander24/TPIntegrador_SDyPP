@@ -18,11 +18,12 @@ log = logging.getLogger("voxchain.worker.standalone")
 
 class StandaloneWorker:
     def __init__(self, messaging, *, worker_id: str, mine,
-                 clock=time.time):
+                 clock=time.time, signer=None):
         self.m = messaging
         self.worker_id = worker_id
         self.mine = mine
         self.now = clock
+        self.signer = signer
         self._solved: set[str] = set()
         self._running = True
         self.nonce_space = int(os.getenv("STANDALONE_NONCE_SPACE", "50000000"))
@@ -59,12 +60,16 @@ class StandaloneWorker:
 
         self._solved.add(wid)
         worker_nonces_found_total.inc()
-        self.m.publish_nonce_response({
+        winner = self.signer.identity(self.worker_id) if self.signer else self.worker_id
+        payload = {
             "voting_window_id": wid,
             "nonce": nonce,
-            "winning_node_or_pool": self.worker_id,
+            "winning_node_or_pool": winner,
             "block_hash_candidato": hash_hex,
-        })
+        }
+        if self.signer and self.signer.enabled:
+            payload["signature"] = self.signer.sign_nonce(wid, nonce, winner)
+        self.m.publish_nonce_response(payload)
         log.info("%s nonce %d publicado para ventana %s", self.worker_id, nonce, wid)
 
     def stop(self) -> None:

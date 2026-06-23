@@ -64,6 +64,14 @@ def public_key_b64(private_key) -> str:
     return base64.b64encode(der).decode()
 
 
+def load_private_key(pem_path: str):
+    """Carga una clave privada EC desde un archivo PEM (sin passphrase)."""
+    from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+    with open(pem_path, "rb") as fh:
+        return load_pem_private_key(fh.read(), password=None)
+
+
 def verify(pubkey_b64: str, message: bytes, signature_b64: str) -> bool:
     """Verifica una firma ECDSA P-256/SHA-256.
 

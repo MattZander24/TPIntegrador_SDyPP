@@ -26,7 +26,7 @@ from common.blockchain import (
     verify_nonce,
 )
 from common.blockchain.challenge import VALID_ACTIONS
-from common.identity import proposal_message, verify
+from common.identity import nonce_message, proposal_message, verify
 from common.messaging import QUEUE_PROPUESTAS, QUEUE_RESPUESTA_NONCE
 from common.storage import LawStatus, WindowResult
 from common.metrics import (
@@ -171,6 +171,26 @@ class NCTCoordinator:
             return False
         return True
 
+    def _nonce_signature_ok(self, voting_window_id: str, nonce, winner: str,
+                            signature) -> bool:
+        """Valida la firma de una respuesta de nonce (A-01 fase 2).
+
+        Sin firma: rechaza sólo si require_signatures; en migración acepta (el
+        PoW se verifica igual con verify_nonce). Con firma: ``winner`` debe ser la
+        pubkey que firmó ``voting_window_id|nonce|winner``.
+        """
+        if not signature:
+            if self.require_signatures:
+                log.warning("nonce rechazado: sin firma (%s)",
+                            (winner or "?")[:12])
+                return False
+            return True
+        msg = nonce_message(voting_window_id, nonce, winner)
+        if not verify(winner, msg, signature):
+            log.warning("nonce rechazado: firma inválida (%s)", (winner or "?")[:12])
+            return False
+        return True
+
     def _created_at_fresh(self, created_at: str) -> bool:
         try:
             ts = datetime.fromisoformat(created_at).timestamp()
@@ -281,6 +301,12 @@ class NCTCoordinator:
 
         winner = sol.get("winning_node_or_pool", "")
         nonce = sol.get("nonce")
+        # Firma del solver (A-01 fase 2): si está firmada, winner es la pubkey y
+        # la firma debe validar; con require_signatures es obligatoria. Esto hace
+        # exigible la regla 3.4 (un atacante no puede declarar winner==autor ajeno).
+        if not self._nonce_signature_ok(active["voting_window_id"], nonce, winner,
+                                        sol.get("signature")):
+            return
         # Regla 3.4: el autor pierde el voto en la ventana de su propia ley.
         if winner and winner == active["author_pubkey"]:
             log.info("nonce descartado: el autor no puede ganar su propia ventana")

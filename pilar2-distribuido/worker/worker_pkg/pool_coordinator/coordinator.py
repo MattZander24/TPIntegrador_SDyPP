@@ -47,9 +47,11 @@ class PoolCoordinator:
     def __init__(self, messaging, *, pool_id: str, redis, mine,
                  capacity: int = 1, clock=time.time,
                  keepalive_interval: float = 5.0,
-                 lease_ttl: int = 10, lease_key: str = "pool:leader"):
+                 lease_ttl: int = 10, lease_key: str = "pool:leader",
+                 signer=None):
         self.m = messaging
         self.pool_id = pool_id
+        self.signer = signer
         self.redis = redis
         self.capacity = capacity
         self.mine = mine
@@ -191,12 +193,16 @@ class PoolCoordinator:
             return False
         self._solved.add(wid)
         pool_nonces_found_total.inc()
-        self.m.publish_nonce_response({
+        winner = self.signer.identity(self.pool_id) if self.signer else self.pool_id
+        payload = {
             "voting_window_id": wid,
             "nonce": nonce,
-            "winning_node_or_pool": self.pool_id,
+            "winning_node_or_pool": winner,
             "block_hash_candidato": hash_hex,
-        })
+        }
+        if self.signer and self.signer.enabled:
+            payload["signature"] = self.signer.sign_nonce(wid, nonce, winner)
+        self.m.publish_nonce_response(payload)
         log.info("pool %s publicó nonce %d para ventana %s", self.pool_id, nonce, wid)
         return True
 
