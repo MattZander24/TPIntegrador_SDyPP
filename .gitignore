@@ -9,6 +9,10 @@ venv/
 node_modules/
 npm-debug.log*
 
+# Angular build artifacts
+dist/
+.angular/
+
 # Java
 target/
 *.class
