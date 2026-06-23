@@ -4,8 +4,8 @@ metadata:
   name: redis
   namespace: voxchain
 spec:
-  serviceName: redis
-  replicas: 1
+  serviceName: redis-headless
+  replicas: 3
   selector:
     matchLabels:
       app: redis
@@ -14,25 +14,45 @@ spec:
       labels:
         app: redis
     spec:
+      terminationGracePeriodSeconds: 30
       containers:
         - name: redis
           image: redis:7-alpine
-          # AUTH habilitado (A-02): la contraseña viene del secret redis-credentials
-          # (ExternalSecret ← GCP Secret Manager). protected-mode evita acceso anónimo.
-          command:
-            - redis-server
-            - --appendonly
-            - "yes"
-            - --requirepass
-            - "$(REDIS_PASSWORD)"
-            - --protected-mode
-            - "yes"
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
           env:
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: redis-credentials
                   key: password
+            - name: MY_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          command:
+            - /bin/sh
+            - -c
+            - |
+              if [ "$MY_POD_NAME" = "redis-0" ]; then
+                exec redis-server \
+                  --appendonly yes \
+                  --requirepass "$REDIS_PASSWORD" \
+                  --masterauth "$REDIS_PASSWORD" \
+                  --protected-mode yes
+              else
+                exec redis-server \
+                  --appendonly yes \
+                  --requirepass "$REDIS_PASSWORD" \
+                  --masterauth "$REDIS_PASSWORD" \
+                  --protected-mode yes \
+                  --replicaof redis-0.redis.voxchain.svc.cluster.local 6379
+              fi
           ports:
             - containerPort: 6379
               name: redis

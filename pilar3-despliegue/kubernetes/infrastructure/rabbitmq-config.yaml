@@ -16,3 +16,12 @@ data:
     management.ssl.certfile = /etc/rabbitmq/ssl/rabbitmq-cert.pem
     management.ssl.keyfile = /etc/rabbitmq/ssl/rabbitmq-key.pem
     management.ssl.cacertfile = /etc/rabbitmq/ssl/ca.crt
+
+    cluster_formation.peer_discovery_backend = rabbit_peer_discovery_k8s
+    cluster_formation.k8s.host = kubernetes.default.svc
+    cluster_formation.k8s.address_type = hostname
+    cluster_formation.k8s.service_name = rabbitmq
+    cluster_formation.k8s.hostname_suffix = .rabbitmq.voxchain.svc.cluster.local
+    cluster_formation.node_cleanup.interval = 30
+  enabled_plugins: |
+    [rabbitmq_management,rabbitmq_peer_discovery_k8s].

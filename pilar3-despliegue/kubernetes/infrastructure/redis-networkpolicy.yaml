@@ -20,7 +20,7 @@ spec:
             matchExpressions:
               - key: app
                 operator: In
-                values: ["nct-primary", "nct-standby", "voxchain-api"]
+                values: ["nct-primary", "nct-standby", "voxchain-api", "redis-sentinel"]
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: g-git-push-cv

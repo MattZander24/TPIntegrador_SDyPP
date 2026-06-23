@@ -24,7 +24,7 @@ set -euo pipefail
 # Lo que hace cada modo:
 #
 # --gke:
-#   1. Build & push de todas las imágenes (nct, trp, api, frontend,
+#   1. Build & push de todas las imágenes (nct, api, frontend,
 #      worker, pool-coordinator) a Artifact Registry.
 #   2. kubectl set image para los deployments con deploy: true.
 #   3. kubectl apply -f de infra/, applications/, hpa/, monitoring/.
@@ -130,7 +130,6 @@ deploy_gke() {
     # Build matrix: (name, dockerfile, context, container_name, k8s_name, deploy)
     services=(
         "nct:pilar2-distribuido/nct-coordinator/Dockerfile:.::nct:nct-primary:true"
-        "transaction-pool:pilar2-distribuido/transaction-pool/Dockerfile:.::trp:transaction-pool:true"
         "voxchain-api:pilar2-distribuido/voxchain_api/Dockerfile:.::api:voxchain-api:true"
         "voxchain-frontend:pilar2-distribuido/voxchain-frontend/Dockerfile:pilar2-distribuido/voxchain-frontend::frontend:voxchain-frontend:true"
         "worker:pilar2-distribuido/worker/Dockerfile:.::worker:none:false"

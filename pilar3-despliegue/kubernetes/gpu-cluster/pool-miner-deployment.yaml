@@ -16,11 +16,17 @@ spec:
       terminationGracePeriodSeconds: 10
       containers:
         - name: pool-miner
-          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker:41d2b81-v3
+          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
               name: health
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "256Mi"
+            limits:
+              memory: "512Mi"
           env:
             - name: WORKER_MODE
               value: "pool-worker"

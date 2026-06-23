@@ -3,9 +3,11 @@ kind: Service
 metadata:
   name: nct
   namespace: voxchain
+  labels:
+    component: nct
 spec:
   selector:
-    app: nct-primary
+    component: nct
   ports:
     - port: 8080
       targetPort: 8080

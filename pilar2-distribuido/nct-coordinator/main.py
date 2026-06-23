@@ -99,7 +99,7 @@ def main() -> None:
 
     def health() -> dict:
         return {
-            "nct": "ok",
+            "nct": "ok" if nct.is_leader else "standby",
             "redis": "ok" if store.ping() else "down",
             "rabbitmq": "ok" if messaging.is_healthy() else "down",
         }

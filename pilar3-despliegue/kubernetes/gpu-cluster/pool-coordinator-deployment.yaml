@@ -17,13 +17,20 @@ spec:
       containers:
         - name: pool-coordinator
           # Pool Coordinator ahora es el mismo worker en modo pool-coordinator
-          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker:41d2b81-v3
+          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
               name: health
             - containerPort: 9001
               name: http
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
           env:
             - name: RABBITMQ_URL
               value: "amqp://guest:guest@rabbitmq.voxchain.svc.cluster.local:5672/"

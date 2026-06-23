@@ -20,6 +20,13 @@ spec:
           ports:
             - containerPort: 8000
               name: http
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
           env:
             - name: RABBITMQ_USER
               valueFrom:
@@ -42,8 +49,6 @@ spec:
               value: "redis://:$(REDIS_PASSWORD)@redis:6379/0"
             - name: NCT_HEALTH_URL
               value: "http://nct:8080/health"
-            - name: TRP_HEALTH_URL
-              value: "http://transaction-pool:8080/health"
             - name: LOG_DIR
               value: "/var/log/voxchain"
           envFrom:

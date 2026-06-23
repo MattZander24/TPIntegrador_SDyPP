@@ -8,7 +8,7 @@ region = "southamerica-east1"
 cluster_name = "voxchain"
 
 # Infra node pool
-infra_machine_type = "e2-small"
+infra_machine_type = "e2-standard-2"
 infra_min_nodes    = 1
 infra_max_nodes    = 2
 

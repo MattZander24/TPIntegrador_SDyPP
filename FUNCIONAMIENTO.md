@@ -28,6 +28,7 @@
 13. [Tabla resumen de modos de fallo](#13-tabla-resumen-de-modos-de-fallo)
 14. [Limitaciones conocidas (declaradas)](#14-limitaciones-conocidas-declaradas)
 
+
 ---
 
 ## 1. Qué es VoxChain (en una frase)
@@ -67,7 +68,7 @@ El sistema está partido en **3 pilares**:
 - **Pilar 2 — Infraestructura distribuida:** los servicios que orquestan el
   gobierno (lo que se detalla abajo).
 - **Pilar 3 — Despliegue:** Kubernetes (GKE) + OpenTofu/Terraform, CI/CD,
-  autoescalado (HPA/KEDA), observabilidad (Prometheus/Grafana).
+  autoescalado (HPA), observabilidad (Prometheus/Grafana).
 
 ### Servicios del Pilar 2
 
@@ -76,9 +77,8 @@ El sistema está partido en **3 pilares**:
 | **voxchain-api** (FastAPI) | Gateway HTTP. Recibe propuestas del frontend, las publica a RabbitMQ; lee el estado de Redis para exponer la cadena, leyes y ventanas. Emite eventos en tiempo real por **SSE**. | HTTP ↔ frontend; publica a RabbitMQ; lee Redis |
 | **voxchain-frontend** (Angular) | UI web. Genera identidad (par de claves) localmente, propone leyes, muestra la cadena en vivo. | HTTP ↔ API; SSE |
 | **NCT (Nodo Coordinador de Tareas)** | El corazón del consenso. Gestiona **exclusivamente** las ventanas de votación: encola leyes, abre/cierra ventanas, verifica nonces y sella bloques. Corre con **réplica primary + standby** y failover por lease Redis. | Consume RabbitMQ; lee/escribe Redis |
-| **Transaction Pool (TrP)** | Recibe el desafío activo y **fragmenta** el espacio de nonces en tramos pequeños que reparte a los workers. Recibe keep-alives para conocer la capacidad disponible. | RabbitMQ |
-| **Worker** | Minero "standalone". Consume un fragmento de rango, mina (puente al binario CUDA o CPU del Pilar 1) y publica el nonce si lo encuentra. | RabbitMQ |
-| **Pool Coordinator** | Una **facción política**: agrega varios *pool-miners* vía HTTP. Desde afuera es indistinguible de un worker. Subdivide el rango recibido entre sus miners. | RabbitMQ (hacia el NCT/TrP) + HTTP (hacia sus miners) |
+| **Worker** | Minero "standalone". Escucha el topic `desafio_activo` y mina **todo el espacio de nonces** (puente al binario CUDA o CPU del Pilar 1). Publica el nonce si lo encuentra. | RabbitMQ (topic `desafio_activo`) |
+| **Pool Coordinator** | Una **facción política**: agrega varios *pool-miners* vía HTTP. Escucha el mismo topic `desafio_activo`, **fragmenta internamente** el rango y lo subdivide entre sus miners HTTP. También corre su propio loop de minería. | RabbitMQ (topic `desafio_activo`, cola `respuesta_nonce`) + HTTP (hacia sus miners) |
 | **Pool Miner** | Minero que se conecta a un Pool Coordinator por HTTP (no usa RabbitMQ). Pide sub-rangos, mina y devuelve resultados. | HTTP ↔ Pool Coordinator |
 | **RabbitMQ** | Bus de mensajería asíncrona. Colas de trabajo + topics de broadcast. | — |
 | **Redis** | Estado persistente: la cadena de bloques, leyes, ventanas, cooldowns y el *lease* de liderazgo del NCT. | — |
@@ -97,11 +97,15 @@ El sistema está partido en **3 pilares**:
 Hay **dos tipos de canales** en RabbitMQ, y la diferencia es crucial para
 entender los fallos:
 
-- **Colas de trabajo** (`propuestas`, `respuesta_nonce`, `tareas_trp`,
-  `keepalive_trp`): RabbitMQ reparte cada mensaje a **un solo consumidor**
-  (round-robin entre los consumidores conectados).
+- **Colas de trabajo** (`propuestas`, `respuesta_nonce`): RabbitMQ reparte cada
+  mensaje a **un solo consumidor** (round-robin).
 - **Topics / exchanges de broadcast** (`desafio_activo`, `nct.heartbeat`):
   **fan-out**, cada suscriptor recibe **una copia** del mensaje.
+
+> La cola `tareas_trp` y el servicio Transaction Pool fueron eliminados. La
+> fragmentación del espacio de nonces la realiza cada Pool Coordinator
+> internamente vía HTTP hacia sus pool-miners. Los workers standalone minan
+> el espacio completo directamente.
 
 Los flujos:
 
@@ -110,13 +114,11 @@ Los flujos:
 | 1 | `propuestas` | cola | nodo/API → NCT | Una ley nueva (`law_id`, `author_pubkey`, `text_hash`, `action`, texto comprimido). |
 | 2 | `desafio_activo` | **topic** | NCT → toda la red | El desafío de la ventana abierta (`voting_window_id`, `n_zeros_required`, `deadline`, `partial_hash_base`, `action`). |
 | 3 | `respuesta_nonce` | cola | red → NCT | El nonce encontrado (`voting_window_id`, `nonce`, `winning_node_or_pool`). |
-| 4 | `tareas_trp` | cola | TrP → workers | Un fragmento del espacio de nonces (`range_min`, `range_max`, más los datos del desafío). |
-| 5 | `keepalive_trp` | cola | workers → TrP | Keep-alive con capacidad y si tiene GPU. |
-| 6 | `nct.heartbeat` | **topic** | NCT líder → followers | Latido periódico del líder (cada `HEARTBEAT_INTERVAL` ≈ 3 s). |
+| 4 | `nct.heartbeat` | **topic** | NCT líder → followers | Latido periódico del líder (cada `HEARTBEAT_INTERVAL` ≈ 3 s). |
 
-> **Nota:** la cola `nct_election` fue eliminada. El failover del NCT ya no
-> usa RabbitMQ para coordinar la elección; la resuelve Redis directamente
-> (ver §9).
+> **Nota:** la cola `nct_election` y el servicio Transaction Pool (TrP)
+> fueron eliminados. El failover del NCT usa Redis directamente (ver §9), y
+> la fragmentación del nonce la hace cada Pool Coordinator internamente.
 
 **Garantías de RabbitMQ usadas:**
 - Mensajes **persistentes** (`delivery_mode=2`) y colas **durables** → sobreviven
@@ -212,21 +214,19 @@ NCT  — open_window()
    │ 13. Persiste la ventana, marca la ley IN_WINDOW, setea active_window.
    │ 14. Publica el desafío al topic `desafio_activo` (lo reciben TODOS).
    ▼
-Transaction Pool  — handle_challenge()
-   │ 15. Recibe el desafío. Mira qué workers están frescos (keep-alives).
-   │ 16. Fragmenta [0, NONCE_SPACE) en tramos de FRAGMENT_SIZE.
-   │ 17. Publica cada tramo a la cola `tareas_trp`.
-   ▼
-Workers / Pools  — handle_task()
-   │ 18. Cada worker toma un fragmento (round-robin de RabbitMQ).
-   │ 19. Mina ese rango: invoca el binario CUDA (GPU) o el script CPU.
-   │ 20. Si encuentra el nonce → publica a `respuesta_nonce`.
-   │     (Un Pool subdivide su fragmento entre sus pool-miners por HTTP.)
-   ▼
+Workers / Pools  — handle_challenge()
+    │ 15. El worker standalone o el Pool Coordinator reciben el desafío del
+    │     topic `desafio_activo`.
+    │ 16. Worker standalone: mina el rango completo [0, NONCE_SPACE).
+    │ 17. Pool Coordinator: fragmenta internamente [0, NONCE_SPACE) en tramos
+    │     de FRAGMENT_SIZE; reparte vía HTTP a sus pool-miners y mina los suyos.
+    │ 18. Mina el rango: invoca el binario CUDA (GPU) o el script CPU.
+    │ 19. Si encuentra el nonce → publica a `respuesta_nonce`.
+    ▼
 NCT (líder)  — handle_nonce_response()
-   │ 21. ¿Es para la ventana activa? ¿Llegó antes del deadline? Si no → descarta.
-   │ 22. ¿El que gana NO es el autor de la ley? (el autor no vota su propia ley)
-   │ 23. verify_nonce(): recalcula el MD5 y comprueba los n ceros.
+    │ 20. ¿Es para la ventana activa? ¿Llegó antes del deadline? Si no → descarta.
+    │ 21. ¿El que gana NO es el autor de la ley? (el autor no vota su propia ley)
+    │ 22. verify_nonce(): recalcula el MD5 y comprueba los n ceros.
    │ 24. CIERRE ATÓMICO: try_seal_window() (SETNX en Redis). El PRIMER nonce
    │     válido gana; los demás ven la clave ya puesta y se descartan.
    │ 25. _seal(): arma el bloque, lo encadena (previous_hash), lo guarda en Redis.
@@ -364,70 +364,66 @@ Este es **el caso central** del proyecto. Resumen (detalle en §9):
 - **Ventana de solapamiento:** la detección del lease no es instantánea (≈3 s);
   el CAS cubre ese hueco garantizando la integridad de la cadena.
 
-### 8.4 Se cae Redis
-Redis es la **fuente de verdad** y un **punto único de fallo** del estado.
+### 8.4 Se cae Redis (o un nodo del cluster)
+Redis es la **fuente de verdad** del estado. Corre como **3 réplicas (StatefulSet)
++ 3 Sentinel** para alta disponibilidad.
 - **Salud:** el endpoint `/health` del NCT y de la API reporta `redis: down`.
-- **Efectos:**
+- **Efectos si cae el maestro:**
+  - Los Sentinels detectan la caída (5 s de `down-after-milliseconds`) y
+    promueven automáticamente una réplica a maestro (quorum mínimo: 2).
+  - El NCT y la API reconectan al nuevo maestro; la transición es transparente.
+- **Efectos si cae una réplica:**
+  - Sin impacto: el maestro sigue aceptando escrituras, la réplica restante
+    sirve lecturas.
+- **Efectos si caen 2+ nodos simultáneamente (mayoría perdida):**
   - El NCT no puede leer la cola, abrir/cerrar ventanas ni sellar bloques.
   - Falla `renew_leadership` → el líder hace `step_down`; **nadie puede adquirir
-    el lease** (Redis está caído) → el sistema **se detiene de forma segura**, no
-    corrompe la cadena.
-  - La API responde, pero las lecturas de cadena/leyes fallan.
-- **Recuperación:** en Kubernetes, Redis es un **StatefulSet con persistencia
-  (PVC)**. Al reprogramarse, recupera el volumen y la cadena queda intacta. Al
-  volver, el NCT readquiere el lease y continúa.
+    el lease** → el sistema **se detiene de forma segura**, no corrompe la cadena.
+- **Recuperación:** StatefulSet con **PVC (10 GiB, AOF persistente)**. Al
+  reprogramarse, recuperan su volumen y el cluster se rearma.
 - **Mitigación de diseño:** el estado crítico está **idempotentemente** modelado
   (SETNX, contadores monótonos), así que un reinicio no produce dobles bloques.
 
-### 8.5 Se cae RabbitMQ
+### 8.5 Se cae RabbitMQ (o un nodo del cluster)
+RabbitMQ corre como **3 réplicas clusterizadas** (StatefulSet + PVC 5 GiB) con
+**quorum queues** para alta disponibilidad de mensajes.
 - **Salud:** `/health` reporta `rabbitmq: down`.
+- **Caída de 1 nodo:** las quorum queues toleran la pérdida de hasta `<n/2`
+  réplicas (1 de 3). Los clientes reconectan a otro nodo del cluster; no hay
+  pérdida de mensajes ni interrupción.
+- **Caída de 2+ nodos (mayoría perdida):** las quorum queues dejan de aceptar
+  publicaciones/consumos. El sistema queda en pausa.
 - **En la conexión:** `RabbitMQMessaging.connect()` **reintenta** (hasta 30
-  intentos, 2 s entre cada uno) antes de rendirse. Los servicios que arrancan con
-  RabbitMQ caído esperan a que vuelva.
-- **Mensajes en vuelo:** colas durables + mensajes persistentes → **no se pierden
-  los mensajes ya encolados** cuando el broker reinicia.
+  intentos, 2 s entre cada uno) antes de rendirse.
+- **Mensajes en vuelo:** colas durables + mensajes persistentes + PVC → **no se
+  pierden mensajes** incluso si todo el cluster reinicia.
 - **Mensajes sin ACK:** si un consumidor muere procesando, RabbitMQ **reentrega**
-  el mensaje a otro (el ACK es manual y va en `finally`).
+  el mensaje a otro (ACK manual en `finally`).
 - **Efecto temporal:** mientras RabbitMQ está caído, no fluyen propuestas ni
   desafíos ni respuestas; el sistema queda en pausa, pero **no corrompe estado**.
 
-### 8.6 Se cae el Transaction Pool (TrP)
-- **Efecto:** los desafíos publicados por el NCT al topic `desafio_activo` no se
-  fragmentan ni se reparten a los workers vía `tareas_trp`. La ventana
-  probablemente **vence** (caso 7.1) y la ley queda `discarded`.
-- **Recuperación:** el TrP es **stateless** respecto de la cadena (solo mantiene
-  en memoria un mapa de keep-alives frescos). Tiene **≥2 réplicas** y autoescala
-  por CPU (HPA). Al volver, retoma desde el próximo desafío. No hay estado que
-  reconstruir.
-- **Nota:** como `desafio_activo` es un **topic**, cada réplica del TrP recibe
-  una copia del desafío. Las réplicas fragmentan en paralelo; los workers toman
-  los fragmentos por round-robin de la cola `tareas_trp`.
-
-### 8.7 Se cae un Worker (minero standalone)
-- **Mientras minaba:** el mensaje de su fragmento ya fue ACKeado al recibirlo
-  (procesamiento síncrono); ese fragmento concreto no se reintenta, pero **otros
-  fragmentos** del mismo espacio siguen siendo minados por otros workers. Como el
-  rango total se fragmenta, perder un worker solo reduce el throughput, **no
-  rompe la ventana**: si la solución estaba en otro fragmento, igual se encuentra.
+### 8.6 Se cae un Worker (minero standalone)
+- **Mientras minaba:** el worker estaba procesando el rango completo de nonces.
+  Al caer, ningún otro worker retoma su trabajo para esa ventana (cada worker
+  mina el espacio completo independientemente). Si el nonce estaba en el rango
+  del worker caído, se pierde para esa ventana; **pero no rompe el sistema**:
+  otro worker puede encontrar el nonce antes del deadline.
 - **Idempotencia:** el worker recuerda las ventanas que ya resolvió (`_solved`),
   así que una reentrega no genera un doble envío.
-- **Autoescalado:** los workers GPU corren en un cluster k3s con **KEDA**
-  (escala por profundidad de la cola `tareas_trp`) + HPA (máx 10). Si caen, KEDA
-  levanta nuevos según la demanda.
+- **Autoescalado:** HPA por CPU (min 1, máx 10). Si cae, Kubernetes lo
+  reprograma y el HPA escala según la demanda.
 
-### 8.8 No hay workers con GPU disponibles
-- **Detección:** el TrP mira los keep-alives frescos (`KEEPALIVE_TTL` = 15 s) y
-  ve que ninguno tiene GPU.
-- **Acción (decisión de diseño):** el TrP **loguea** la necesidad de escalar
-  mineros CPU, **pero NO reduce la dificultad** `n`. La dificultad la fija el NCT
-  y el ajuste dinámico está prohibido (sería *gameable*). El enunciado sugería
-  "bajar el prefijo sin GPU", pero eso contradiría la dificultad fija del
-  consenso, así que se documenta la decisión en lugar de implementarla.
-- **Escalado real:** levantar mineros CPU es responsabilidad del **Pilar 3**
-  (HPA/KEDA), no de la lógica del TrP. Con solo mineros CPU, las ventanas tardan
+### 8.7 No hay workers con GPU disponibles
+- **Detección:** sin TrP, cada worker standalone o Pool Coordinator mina
+  independientemente. Si no hay GPU, el miner hace **fallback automático a CPU**
+  (ver §8.12).
+- **Acción (decisión de diseño):** la dificultad `n` es fija. El ajuste dinámico
+  está prohibido (sería *gameable*). Con solo mineros CPU, las ventanas tardan
   más (o vencen si `n` es alto), lo cual es el comportamiento esperado.
+- **Escalado real:** levantar más mineros CPU es responsabilidad del **Pilar 3**
+  (HPA).
 
-### 8.9 Se cae el Pool Coordinator
+### 8.8 Se cae el Pool Coordinator
 
 El Pool Coordinator usa un **lease en Redis** (`pool:leader`, TTL 10 s). Solo el
 líder emite keep-alives al NCT. Al caer, el lease expira; los candidatos
@@ -475,14 +471,14 @@ pero implementado íntegramente sobre Redis (sin RabbitMQ).
 lease) + el tiempo de la elección (milisegundos con GPU, segundos con CPU solo) +
 el tiempo de re-registro de los miners (~10-15 s).
 
-### 8.10 Se cae un Pool Miner
+### 8.9 Se cae un Pool Miner
 - Es un cliente HTTP puro. Si cae, el Pool Coordinator lo detecta porque deja de
   recibir su heartbeat (`KEEPALIVE_TTL` = 15 s) y lo **purga** de la lista de
   miners frescos. El rango que tenía asignado simplemente no se completa, pero
   el coordinator reparte el trabajo entre los miners que quedan vivos.
 - Al volver, el pool-miner intenta registrarse en bucle (cada 5 s) hasta lograrlo.
 
-### 8.11 Se cae la voxchain-api
+### 8.10 Se cae la voxchain-api
 - **Efecto:** el frontend no puede proponer leyes ni leer estado; se cortan los
   eventos SSE.
 - **Pero:** el núcleo del consenso (NCT + workers + Redis + RabbitMQ) **sigue
@@ -491,17 +487,17 @@ el tiempo de re-registro de los miners (~10-15 s).
 - **Recuperación:** ≥2 réplicas detrás de un Service/Ingress + HPA por CPU. Al
   reconectar, el frontend reabre el stream SSE y re-sincroniza desde Redis.
 
-### 8.12 Se cae el frontend
+### 8.11 Se cae el frontend
 - Es estático (Angular servido por nginx). Sin impacto en el backend. Las
   identidades viven en el navegador del usuario; al recargar, se reconstruye la
   vista desde la API.
 
-### 8.13 Mensaje malformado / excepción procesando
+### 8.12 Mensaje malformado / excepción procesando
 - El wrapper de consumo (`_wrap`) captura **cualquier excepción**, la loguea, y
   **siempre ACKea** en `finally`. Un mensaje venenoso no traba la cola ni tumba
   el servicio; se descarta y se sigue.
 
-### 8.14 El minero GPU falla o no está disponible
+### 8.13 El minero GPU falla o no está disponible
 - El puente `run_miner()` intenta GPU si el binario existe y es ejecutable. Ante
   **cualquier excepción** (driver ausente, binario corrupto, timeout), hace
   **fallback automático a CPU** (script Python). El sistema sigue minando, más
@@ -520,7 +516,7 @@ Componentes:
 > **Por qué no hay PoW en el NCT:** los nodos NCT son VMs homogéneas en GCP
 > (sin GPU). Un PoW no discrimina capacidad real entre ellos y agrega complejidad
 > sin beneficio. El Pool Coordinator (k3s, con GPU) sí usa PoW porque allí la
-> potencia de cómputo es el criterio relevante (ver §8.9).
+> potencia de cómputo es el criterio relevante (ver §8.8).
 
 ### Roles y arranque
 - `NCT_MODE=primary`: intenta adquirir el lease al arrancar (SETNX). Si lo
@@ -602,12 +598,13 @@ como tal.
 ## 12. Despliegue, escalado y observabilidad
 
 ### Topología (Pilar 3)
-- **Cluster 1 — GKE (GCP):** namespace `voxchain`. Aloja RabbitMQ, Redis, NCT
-  (primary + standby), TrP, API y frontend.
-  - Nodepool `infra` **tainted** → aísla Redis/RabbitMQ.
-  - Nodepool `apps` con **autoscaling** → NCT, TrP, API, Frontend.
-- **Cluster 2 — k3s externo:** workers GPU, conectados a RabbitMQ por el
-  LoadBalancer AMQPS. Escalan con **KEDA** (por profundidad de cola) + HPA.
+- **Cluster 1 — GKE (GCP):** namespace `voxchain`. Aloja RabbitMQ (3 réplicas),
+  Redis (3 réplicas + Sentinel), NCT (primary + standby), API y frontend.
+  - Nodepool `infra` **tainted** (e2-standard-2) → aísla Redis/RabbitMQ.
+  - Nodepool `apps` con **autoscaling** (e2-standard-2) → NCT, API, Frontend.
+  - Cluster **zonal** (`southamerica-east1-a`).
+- **Cluster 2 — k3s externo:** workers GPU + Pool Coordinator + Pool Miners,
+  conectados a RabbitMQ por el LoadBalancer AMQPS. Escalan con **HPA** por CPU.
 
 ### Infraestructura como código
 - **OpenTofu/Terraform** crea VPC, GKE, nodepools, External Secrets, Artifact
@@ -622,19 +619,20 @@ como tal.
 
 ### Alta disponibilidad
 - **≥2 réplicas por servicio** (requisito del enunciado).
-- HPA por CPU (API, TrP); KEDA por cola (workers).
-- Redis como StatefulSet con PVC; GKE regional (1 nodo/AZ) para HA del plano de
-  control.
+- RabbitMQ: 3 réplicas clusterizadas + quorum queues + PVC.
+- Redis: 3 réplicas + Sentinel + PVC.
+- HPA por CPU (API, workers, pool-miners).
+- Cluster GKE **zonal** (HA del plano de control nativa de GKE).
 
 ### Observabilidad (U5.5)
 - **kube-prometheus-stack** (Prometheus + Grafana + Alertmanager).
 - Cada servicio expone `/metrics` con métricas de aplicación:
   - NCT: propuestas, ventanas abiertas, bloques sellados, `nct_is_leader`.
-  - TrP: workers activos, tareas publicadas.
   - Worker/Pool: tareas recibidas, nonces encontrados, `busy`, `has_gpu`.
   - API: requests y latencia por ruta.
 - `/health` en cada servicio devuelve JSON con el estado de sus dependencias
-  (Redis/RabbitMQ), cumpliendo el requisito de endpoint de estado.
+  (Redis/RabbitMQ), cumpliendo el requisito de endpoint de estado. En el NCT,
+  devuelve 200 solo si el nodo es el líder (readiness probe).
 - Logs en memoria y disco (`logging_setup.py`).
 
 ---
@@ -646,11 +644,12 @@ como tal.
 | **NCT líder** | Se detiene el avance de ventanas | Failover por lease Redis (`elect_acquire_leadership`); nuevo líder en ≤HEARTBEAT_TIMEOUT (12 s) | No (guard en Redis) |
 | **NCT primario reinicia** | Ninguno si hay standby | Arranca como follower | No |
 | **Partición NCT (split-brain)** | Solapamiento ≤3 s; posible pérdida de ventana | `step_down` por `renew_leadership`; CAS en `append_block` evita fork | No (CAS garantiza cadena lineal) |
-| **Redis** | Sistema se detiene (seguro) | StatefulSet + PVC; readquiere lease al volver | No (idempotencia) |
-| **RabbitMQ** | Mensajería en pausa | Reconexión con reintentos; colas durables | No |
-| **Transaction Pool** | Ventana puede vencer | Réplicas + HPA; stateless | No |
-| **Worker** | Menos throughput | KEDA/HPA levanta otros; fragmentos redundantes | No |
-| **Sin GPU** | Ventanas más lentas | Escalado CPU (Pilar 3); dificultad NO baja | No |
+| **Redis (maestro)** | Sin impacto inmediato | Sentinel promueve réplica en ≤5 s | No |
+| **Redis (mayoría caída)** | Sistema se detiene (seguro) | StatefulSet + PVC; readquiere lease al volver | No (idempotencia) |
+| **RabbitMQ (1 nodo)** | Sin impacto | Quorum queue tolera 1 falla; cluster 3 nodos | No |
+| **RabbitMQ (mayoría caída)** | Mensajería en pausa | Reconexión + colas durables + PVC | No |
+| **Worker** | Menos throughput | HPA levanta otros; cada uno mina el espacio completo | No |
+| **Sin GPU** | Ventanas más lentas | Fallback automático a CPU; dificultad NO baja | No |
 | **Pool Coordinator** | Pool pierde capacidad ≤10 s + elección | Elección Bully por PoW sobre Redis; otra réplica asume; miners se re-registran solos | No |
 | **Pool Miner** | Menos capacidad del pool | Purga por keep-alive (15 s); re-registro automático al volver | No |
 | **voxchain-api** | Frontend sin servicio | Réplicas + HPA; consenso sigue | No |
@@ -676,9 +675,9 @@ no son descuidos.
 4. **Concentración de poder.** Igual que las blockchains reales de PoW, favorece
    estructuralmente a los pools grandes. Es una observación política
    intencional del proyecto, no un bug.
-5. **Redis como punto único de estado.** Mitigado con persistencia y la
-   propiedad de que un reinicio no duplica bloques, pero sigue siendo el SPOF del
-   estado.
+5. **Redis como punto único de estado.** Mitigado con 3 réplicas + Sentinel
+   para failover automático, más persistencia (PVC con AOF). Si caen 2+ nodos
+   simultáneamente el sistema se detiene, pero no corrompe la cadena.
 6. **`elect_acquire_leadership` no es estrictamente atómico** (GET+SET); la
    atomicidad práctica la aportan el `dead_threshold` y el margen temporal
    mínimo entre operaciones.
@@ -688,10 +687,10 @@ no son descuidos.
 ### Cierre
 
 VoxChain demuestra los conceptos centrales de la materia en un sistema coherente:
-**procesamiento paralelo** (CUDA + bolsa de tareas fragmentada), **comunicación
+**procesamiento paralelo** (CUDA + minería concurrente), **comunicación
 asíncrona** (RabbitMQ con colas y topics), **consenso y tolerancia a fallos**
 (Bully por esfuerzo, leases en Redis, cierre atómico), **persistencia
-distribuida** (Redis + esquema de cadena), y **despliegue cloud-native**
+distribuida** (Redis + cadena de bloques), y **despliegue cloud-native**
 (Kubernetes, IaC, CI/CD, autoescalado y observabilidad). La elección de "gobierno
 por PoW" en vez de "transferencias de dinero" es el giro original que ata todo.
 El Bully mejorado se aplica donde realmente importa — en el Pool Coordinator,

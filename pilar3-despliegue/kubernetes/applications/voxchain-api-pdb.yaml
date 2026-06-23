@@ -1,0 +1,10 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: voxchain-api
+  namespace: voxchain
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: voxchain-api

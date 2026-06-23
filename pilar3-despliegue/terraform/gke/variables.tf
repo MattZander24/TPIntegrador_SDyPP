@@ -25,7 +25,7 @@ variable "cluster_name" {
 variable "infra_machine_type" {
   description = "Machine type for infrastructure node pool"
   type        = string
-  default     = "e2-small"
+    default     = "e2-standard-2"
 }
 
 variable "infra_min_nodes" {

@@ -5,7 +5,7 @@ metadata:
   namespace: voxchain
 spec:
   serviceName: rabbitmq
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: rabbitmq
@@ -14,6 +14,7 @@ spec:
       labels:
         app: rabbitmq
     spec:
+      terminationGracePeriodSeconds: 60
       containers:
         - name: rabbitmq
           image: rabbitmq:3-management
@@ -24,13 +25,29 @@ spec:
               name: amqps
             - containerPort: 15672
               name: management
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "512Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
           env:
             - name: RABBITMQ_ERLANG_COOKIE
               valueFrom:
                 secretKeyRef:
                   name: rabbitmq-credentials
                   key: erlang-cookie
-                  optional: true
+            - name: RABBITMQ_USE_LONGNAME
+              value: "true"
+            - name: MY_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: MY_POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           livenessProbe:
             exec:
               command: ["rabbitmq-diagnostics", "-q", "ping"]
@@ -49,9 +66,14 @@ spec:
             - name: config
               mountPath: /etc/rabbitmq/rabbitmq.conf
               subPath: rabbitmq.conf
+            - name: config
+              mountPath: /etc/rabbitmq/enabled_plugins
+              subPath: enabled_plugins
             - name: tls
               mountPath: /etc/rabbitmq/ssl
               readOnly: true
+            - name: data
+              mountPath: /var/lib/rabbitmq
       volumes:
         - name: config
           configMap:
@@ -59,3 +81,11 @@ spec:
         - name: tls
           secret:
             secretName: rabbitmq-tls
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

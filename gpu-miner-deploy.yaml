@@ -19,8 +19,23 @@ spec:
           value: rabbitmq
         - name: WORKER_ID
           value: gpu-miner-1060
+        - name: RABBITMQ_USER
+          valueFrom:
+            secretKeyRef:
+              name: rabbitmq-credentials
+              key: username
+        - name: RABBITMQ_PASS
+          valueFrom:
+            secretKeyRef:
+              name: rabbitmq-credentials
+              key: password
+        - name: RABBITMQ_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: worker-config
+              key: rabbitmq-host
         - name: RABBITMQ_URL
-          value: amqp://voxchain-worker:sdypp2026@35.247.243.169:5672/
+          value: "amqp://$(RABBITMQ_USER):$(RABBITMQ_PASS)@$(RABBITMQ_HOST):5672/"
         - name: WORKER_CAPACITY
           value: "1"
         resources:
