@@ -16,3 +16,8 @@ infra_max_nodes    = 2
 apps_machine_type = "e2-standard-2"
 apps_min_nodes    = 2
 apps_max_nodes    = 3
+
+# Grafana admin password (A-03): NO ponerla acá. Inyectarla por entorno para que
+# no quede en el repo ni en el state versionado:
+#   export TF_VAR_grafana_admin_password="$(openssl rand -base64 24)"
+# En CI: TF_VAR_grafana_admin_password = ${{ secrets.GRAFANA_ADMIN_PASSWORD }}

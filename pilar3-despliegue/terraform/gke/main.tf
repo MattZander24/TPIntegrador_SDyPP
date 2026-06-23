@@ -318,7 +318,7 @@ resource "helm_release" "kube_prometheus_stack" {
 
   values = [yamlencode({
     grafana = {
-      adminPassword = "voxchain"
+      adminPassword = var.grafana_admin_password
       ingress = {
         enabled = false
       }

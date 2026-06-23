@@ -63,3 +63,9 @@ variable "github_repository" {
   type        = string
   default     = "MattZander24/TPIntegrador_SDyPP"
 }
+
+variable "grafana_admin_password" {
+  description = "Contraseña del admin de Grafana. Inyectar vía TF_VAR_grafana_admin_password desde GitHub Secrets / Secret Manager (A-03: zero static keys). Sin default para forzar su provisión explícita."
+  type        = string
+  sensitive   = true
+}

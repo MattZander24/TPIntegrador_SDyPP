@@ -1,6 +1,27 @@
+# Extiende el ruleset por defecto de gitleaks (no lo reemplaza) y agrega una
+# regla para credenciales hardcodeadas en código/IaC que las reglas genéricas
+# pueden no detectar (A-03: el caso `adminPassword = "voxchain"` en main.tf).
+[extend]
+useDefault = true
+
 [allowlist]
 description = "allowlisted files"
 paths = [
     ".gitignore",
     ".gitleaks.toml",
+]
+
+[[rules]]
+id = "hardcoded-credential-assignment"
+description = "Password/credencial hardcodeada (asignación literal en código o IaC)"
+regex = '''(?i)(admin_?password|passwd|password|pwd|secret)\s*[:=]\s*["'][^"'\s]{6,}["']'''
+[rules.allowlist]
+description = "Placeholders e interpolaciones legítimas, no secretos reales"
+regexes = [
+    '''CHANGE_ME''',          # placeholder de .secrets/*.yaml
+    '''var\.''',              # variables de Terraform (var.grafana_admin_password)
+    '''\$\{''',               # interpolaciones ${...}
+    '''\$\(''',               # interpolaciones $(...)
+    '''secretKeyRef''',       # referencias a Secrets de K8s
+    '''valueFrom''',
 ]
