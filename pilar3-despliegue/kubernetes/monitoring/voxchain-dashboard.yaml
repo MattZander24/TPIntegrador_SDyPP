@@ -19,92 +19,162 @@ data:
         {
           "title": "Propuestas / seg",
           "type": "stat",
-          "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
-          "targets": [{
-            "expr": "rate(voxchain_nct_proposals_total[1m])",
-            "legendFormat": "propuestas/s"
-          }]
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 0
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(voxchain_nct_proposals_total{job=\"nct\"}[1m]))",
+              "legendFormat": "propuestas/s"
+            }
+          ]
         },
         {
           "title": "Bloques sellados",
           "type": "stat",
-          "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
-          "targets": [{
-            "expr": "voxchain_nct_blocks_sealed_total",
-            "legendFormat": "bloques"
-          }]
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 0
+          },
+          "targets": [
+            {
+              "expr": "sum(voxchain_nct_blocks_sealed_total{job=\"nct\"})",
+              "legendFormat": "bloques"
+            }
+          ]
         },
         {
           "title": "Workers activos",
           "type": "stat",
-          "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
-          "targets": [{
-            "expr": "voxchain_trp_active_workers",
-            "legendFormat": "workers"
-          }]
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 0
+          },
+          "targets": [
+            {
+              "expr": "sum(voxchain_pool_miners_registered)",
+              "legendFormat": "workers"
+            }
+          ]
         },
         {
-          "title": "NCT Líder",
+          "title": "NCT L\u00edder",
           "type": "stat",
-          "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
-          "targets": [{
-            "expr": "voxchain_nct_is_leader",
-            "legendFormat": "líder"
-          }]
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 12,
+            "y": 0
+          },
+          "targets": [
+            {
+              "expr": "max(voxchain_nct_is_leader{job=\"nct\"})",
+              "legendFormat": "l\u00edder"
+            }
+          ]
         },
         {
           "title": "Throughput de propuestas",
           "type": "timeseries",
-          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
-          "targets": [{
-            "expr": "rate(voxchain_nct_proposals_total[1m])",
-            "legendFormat": "propuestas/s"
-          }]
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 4
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(voxchain_nct_proposals_total{job=\"nct\"}[1m]))",
+              "legendFormat": "propuestas/s"
+            }
+          ]
         },
         {
-          "title": "Workers activos (histórico)",
+          "title": "Workers activos (hist\u00f3rico)",
           "type": "timeseries",
-          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
-          "targets": [{
-            "expr": "voxchain_trp_active_workers",
-            "legendFormat": "workers"
-          }]
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 4
+          },
+          "targets": [
+            {
+              "expr": "sum(voxchain_pool_miners_registered)",
+              "legendFormat": "workers"
+            }
+          ]
         },
         {
           "title": "HTTP Requests por minuto",
           "type": "timeseries",
-          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
-          "targets": [{
-            "expr": "sum(rate(voxchain_api_http_requests_total[1m]))",
-            "legendFormat": "requests/min"
-          }]
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 12
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(voxchain_api_http_requests_total[1m]))",
+              "legendFormat": "requests/min"
+            }
+          ]
         },
         {
           "title": "Latencia HTTP (p99)",
           "type": "timeseries",
-          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
-          "targets": [{
-            "expr": "histogram_quantile(0.99, sum(rate(voxchain_api_http_request_duration_seconds_bucket[1m])) by (le))",
-            "legendFormat": "p99"
-          }]
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 12
+          },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.99, sum(rate(voxchain_api_http_request_duration_seconds_bucket[1m])) by (le))",
+              "legendFormat": "p99"
+            }
+          ]
         },
         {
           "title": "Nonces encontrados por worker",
           "type": "timeseries",
-          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
-          "targets": [{
-            "expr": "rate(voxchain_worker_nonces_found_total[1m])",
-            "legendFormat": "nonces/min"
-          }]
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 20
+          },
+          "targets": [
+            {
+              "expr": "sum(rate(voxchain_worker_nonces_found_total[1m]))",
+              "legendFormat": "nonces/min"
+            }
+          ]
         },
         {
           "title": "Worker ocupado",
           "type": "timeseries",
-          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
-          "targets": [{
-            "expr": "voxchain_worker_busy",
-            "legendFormat": "{{worker_id}}"
-          }]
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 20
+          },
+          "targets": [
+            {
+              "expr": "max(voxchain_worker_busy)",
+              "legendFormat": "{{worker_id}}"
+            }
+          ]
         }
       ]
     }
