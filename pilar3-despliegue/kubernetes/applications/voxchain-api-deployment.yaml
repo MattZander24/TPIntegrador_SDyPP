@@ -33,8 +33,13 @@ spec:
                   key: password
             - name: RABBITMQ_URL
               value: "amqp://$(RABBITMQ_USER):$(RABBITMQ_PASS)@rabbitmq:5672/"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: password
             - name: REDIS_URL
-              value: "redis://redis:6379/0"
+              value: "redis://:$(REDIS_PASSWORD)@redis:6379/0"
             - name: NCT_HEALTH_URL
               value: "http://nct:8080/health"
             - name: TRP_HEALTH_URL

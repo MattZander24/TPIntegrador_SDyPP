@@ -27,8 +27,16 @@ spec:
           env:
             - name: RABBITMQ_URL
               value: "amqp://guest:guest@rabbitmq.voxchain.svc.cluster.local:5672/"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: password
+            # FQDN cross-namespace + AUTH (A-02): el pool-coordinator usa Redis
+            # para el lease pool:leader. El host era "redis" (no resolvía fuera de
+            # voxchain); ahora apunta al Service real con contraseña.
             - name: REDIS_URL
-              value: "redis://redis:6379/0"
+              value: "redis://:$(REDIS_PASSWORD)@redis.voxchain.svc.cluster.local:6379/0"
             - name: WORKER_MODE
               value: "pool-coordinator"
             - name: POOL_HTTP_PORT

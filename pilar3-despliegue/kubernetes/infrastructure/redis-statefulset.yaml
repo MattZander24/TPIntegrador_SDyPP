@@ -17,18 +17,33 @@ spec:
       containers:
         - name: redis
           image: redis:7-alpine
-          command: ["redis-server", "--appendonly", "yes"]
+          # AUTH habilitado (A-02): la contraseña viene del secret redis-credentials
+          # (ExternalSecret ← GCP Secret Manager). protected-mode evita acceso anónimo.
+          command:
+            - redis-server
+            - --appendonly
+            - "yes"
+            - --requirepass
+            - "$(REDIS_PASSWORD)"
+            - --protected-mode
+            - "yes"
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: password
           ports:
             - containerPort: 6379
               name: redis
           livenessProbe:
             exec:
-              command: ["redis-cli", "ping"]
+              command: ["sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" --no-auth-warning ping"]
             initialDelaySeconds: 10
             periodSeconds: 10
           readinessProbe:
             exec:
-              command: ["redis-cli", "ping"]
+              command: ["sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" --no-auth-warning ping"]
             initialDelaySeconds: 5
             periodSeconds: 5
           volumeMounts:

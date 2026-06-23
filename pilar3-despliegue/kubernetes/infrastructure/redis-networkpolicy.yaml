@@ -1,0 +1,29 @@
+# A-02: restringe el ingress a Redis. Al seleccionar los pods de Redis, esta
+# policy los pone en modo default-deny y solo admite a los clientes legítimos:
+# NCT (primary/standby) y API en el namespace voxchain, más el pool-coordinator
+# en g-git-push-cv (usa Redis para el lease pool:leader). RabbitMQ NO lleva
+# NetworkPolicy porque se expone a Internet por diseño (LoadBalancer + TLS).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-allow-clients
+  namespace: voxchain
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values: ["nct-primary", "nct-standby", "voxchain-api"]
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: g-git-push-cv
+      ports:
+        - protocol: TCP
+          port: 6379
