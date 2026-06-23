@@ -346,7 +346,20 @@ class NCTCoordinator:
             text_compressed=text_compressed,
             text_original_len=text_original_len,
         )
-        self.store.append_block(block)
+        # CAS atómico (A-04): si otro NCT ya avanzó el tip durante el solapamiento
+        # de split-brain, append_block devuelve False y abortamos para evitar fork.
+        if not self.store.append_block(block):
+            log.warning(
+                "append_block rechazado por CAS (tip cambió): split-brain detectado "
+                "en ventana %s — re-encolando ley %s",
+                active["voting_window_id"], law_id,
+            )
+            self.store.set_law_status(law_id, LawStatus.PENDING_QUEUE)
+            self.store.enqueue_law(law_id)
+            self.store.clear_active_window()
+            self._active = None
+            self.maybe_open_window()
+            return
         self.store.set_window_result(active["voting_window_id"],
                                      result=WindowResult.SUCCESS, winning_nonce=nonce,
                                      winning_node_or_pool=winner)

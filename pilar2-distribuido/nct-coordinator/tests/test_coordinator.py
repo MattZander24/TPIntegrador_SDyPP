@@ -221,3 +221,38 @@ def test_round_robin_entre_dos_autores_en_ventanas_sucesivas(bus, store):
                                 "nonce": nonce, "winning_node_or_pool": "p"})
     # ventana 2 debe saltar a B (no a LA2), por round-robin
     assert challenges[1]["law_id"] == "LB1"
+
+
+def test_seal_aborta_si_cas_falla_sin_fork(bus, store):
+    """Si append_block devuelve False (tip cambió), _seal aborta sin fork (A-04).
+
+    Simula el escenario de split-brain: un NCT-B intenta sellar su ventana pero
+    NCT-A ya avanzó el tip. El bloque de NCT-B se rechaza, la ley se re-encola
+    y la cadena queda intacta.
+    """
+    from unittest.mock import patch
+    from common.blockchain.block import GENESIS_PREVIOUS_HASH
+
+    clock = Clock()
+    challenges = capture_challenges(bus)
+    nct = make_nct(bus, store, clock)
+
+    # Abrir ventana con L1
+    bus.publish_proposal({"law_id": "L1", "author_pubkey": "A",
+                          "text_hash": "h1", "created_at": "t0"})
+    ch = challenges[0]
+    nonce = solve(ch["partial_hash_base"], ch["n_zeros_required"])
+
+    # Forzar que append_block devuelva False (otro NCT se adelantó)
+    with patch.object(store, "append_block", return_value=False):
+        bus.publish_nonce_response({"voting_window_id": ch["voting_window_id"],
+                                    "nonce": nonce, "winning_node_or_pool": "pool-X"})
+
+    # Cadena intacta: no se agregó ningún bloque → no hay fork
+    assert store.chain_length() == 0
+    # La ley no quedó marcada como promulgada (el sellado fue abortado)
+    assert store.get_law("L1")["status"] != LawStatus.PROMULGATED
+    # maybe_open_window() re-abre inmediatamente una nueva ventana con L1,
+    # así que el NCT no queda con estado colgado del intento fallido
+    assert nct._active is not None
+    assert nct._active["law_id"] == "L1"

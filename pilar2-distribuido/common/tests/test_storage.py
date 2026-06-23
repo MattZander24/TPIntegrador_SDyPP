@@ -86,14 +86,38 @@ def test_append_and_read_chain(store):
     b1 = seal_block(previous_hash=GENESIS_PREVIOUS_HASH, law_id="L1",
                     action=ACTION_PROMULGACION, n_zeros_required=1, nonce=5,
                     winning_node_or_pool="n1", voting_window_id="W1", timestamp="t1")
-    store.append_block(b1)
+    assert store.append_block(b1) is True
     b2 = seal_block(previous_hash=b1.block_hash, law_id="L2",
                     action=ACTION_PROMULGACION, n_zeros_required=1, nonce=6,
                     winning_node_or_pool="n2", voting_window_id="W2", timestamp="t2")
-    store.append_block(b2)
+    assert store.append_block(b2) is True
     assert store.chain_length() == 2
     assert store.last_block_hash() == b2.block_hash
     chain = store.get_chain()
     assert [b.law_id for b in chain] == ["L1", "L2"]
     assert chain[0].is_hash_valid()
     assert store.get_block(b1.block_hash) == b1
+
+
+def test_append_block_cas_rechaza_tip_incorrecto(store):
+    """Un bloque con previous_hash que no es el tip actual es rechazado (A-04)."""
+    b1 = seal_block(previous_hash=GENESIS_PREVIOUS_HASH, law_id="L1",
+                    action=ACTION_PROMULGACION, n_zeros_required=1, nonce=5,
+                    winning_node_or_pool="n1", voting_window_id="W1", timestamp="t1")
+    assert store.append_block(b1) is True
+
+    # Bloque que apunta a genesis (tip incorrecto: el tip real es b1.block_hash)
+    b_fork = seal_block(previous_hash=GENESIS_PREVIOUS_HASH, law_id="L2",
+                        action=ACTION_PROMULGACION, n_zeros_required=1, nonce=7,
+                        winning_node_or_pool="n2", voting_window_id="W2", timestamp="t2")
+    assert store.append_block(b_fork) is False
+    assert store.chain_length() == 1  # cadena intacta
+
+
+def test_append_block_genesis_acepta_cadena_vacia(store):
+    """El primer bloque se acepta aunque la cadena esté vacía (sin tip)."""
+    b1 = seal_block(previous_hash=GENESIS_PREVIOUS_HASH, law_id="L1",
+                    action=ACTION_PROMULGACION, n_zeros_required=1, nonce=5,
+                    winning_node_or_pool="n1", voting_window_id="W1", timestamp="t1")
+    assert store.append_block(b1) is True
+    assert store.chain_length() == 1

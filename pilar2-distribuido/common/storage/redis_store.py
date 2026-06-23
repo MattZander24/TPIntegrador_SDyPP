@@ -232,11 +232,52 @@ class VoxChainStore:
         return self.current_window_number() < int(cd["cooldown_until_window"])
 
     # ---- bloques y cadena (7.3) -------------------------------------------
-    def append_block(self, block: Block) -> None:
-        self.r.hset(f"block:{block.block_hash}", mapping={
-            k: ("" if v is None else v) for k, v in block.to_dict().items()
-        })
-        self.r.rpush("chain", block.block_hash)
+
+    # Script Lua que hace HSET + RPUSH de forma atómica solo si el tip actual
+    # de la cadena coincide con previous_hash (CAS sobre el tip). Esto evita
+    # que dos NCT en split-brain encadenen bloques del mismo previous_hash
+    # produciendo un fork (A-04).
+    #
+    # KEYS[1] = "chain"
+    # KEYS[2] = "block:<hash>"
+    # ARGV[1] = previous_hash esperado
+    # ARGV[2] = nuevo block_hash
+    # ARGV[3..] = pares campo-valor para HSET
+    #
+    # Retorna 1 si el append se realizó, 0 si el tip no coincidió.
+    _APPEND_BLOCK_LUA = """
+local tip = redis.call('LINDEX', KEYS[1], -1)
+local expected = ARGV[1]
+if tip ~= false and tip ~= expected then
+    return 0
+end
+local fields = {}
+for i = 3, #ARGV do
+    fields[#fields + 1] = ARGV[i]
+end
+redis.call('HSET', KEYS[2], unpack(fields))
+redis.call('RPUSH', KEYS[1], ARGV[2])
+return 1
+"""
+
+    def append_block(self, block: Block) -> bool:
+        """Agrega un bloque a la cadena con CAS atómico sobre el tip.
+
+        Devuelve True si el bloque se agregó, False si el tip de la cadena
+        ya no era block.previous_hash (otro NCT se adelantó durante split-brain).
+        """
+        block_data = {k: ("" if v is None else str(v))
+                      for k, v in block.to_dict().items()}
+        flat_fields = [item for pair in block_data.items() for item in pair]
+        result = self.r.eval(
+            self._APPEND_BLOCK_LUA, 2,
+            "chain",
+            f"block:{block.block_hash}",
+            block.previous_hash,
+            block.block_hash,
+            *flat_fields,
+        )
+        return bool(result)
 
     def get_block(self, block_hash: str) -> Optional[Block]:
         data = self.r.hgetall(f"block:{block_hash}")
