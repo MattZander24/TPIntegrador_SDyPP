@@ -33,8 +33,25 @@ async def get_health(redis: RedisReader = Depends(get_redis_reader)):
     except Exception:
         nct_status = "error"
 
+    # Check Workers (basic check - try to reach at least one worker)
+    workers_status = "ok"
+    try:
+        async with httpx.AsyncClient() as client:
+            # Try to reach the pool coordinator admin endpoint
+            response = await client.get("http://worker-pool-coordinator:9090/status", timeout=2.0)
+            workers_status = "ok" if response.status_code == 200 else "error"
+    except Exception:
+        # If pool coordinator is not reachable, try localhost for development
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get("http://localhost:9090/status", timeout=2.0)
+                workers_status = "ok" if response.status_code == 200 else "error"
+        except Exception:
+            workers_status = "unknown"
+
     return HealthResponse(
         api="ok",
         nct=nct_status,
         redis=redis_status,
+        workers=workers_status,
     )

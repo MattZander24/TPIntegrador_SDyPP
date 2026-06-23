@@ -17,6 +17,7 @@ import { IdentityService } from './core/services/identity.service';
       <a mat-button routerLink="/chain">Chain</a>
       <a mat-button routerLink="/laws">Laws</a>
       <a mat-button routerLink="/health">Health</a>
+      <a mat-button routerLink="/workers">Workers</a>
       <a mat-button routerLink="/queue" *ngIf="identityService.identity()">Vote</a>
       <a mat-button routerLink="/propose" *ngIf="identityService.identity()">Propose Law</a>
       <a mat-button routerLink="/identity" *ngIf="!identityService.identity()">Register</a>
