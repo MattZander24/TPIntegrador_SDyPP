@@ -49,6 +49,7 @@ class PoolCoordinator:
                  capacity: int = 1, clock=time.time,
                  keepalive_interval: float = 5.0,
                  lease_ttl: int = 10, lease_key: str = "pool:leader",
+                 election_n_zeros: int | None = None,
                  signer=None):
         self.m = messaging
         self.pool_id = pool_id
@@ -73,6 +74,14 @@ class PoolCoordinator:
         self._auto_miner_thread: threading.Thread | None = None
         self.nonce_space = int(os.getenv("NONCE_SPACE", "50000000"))
         self.fragment_size = int(os.getenv("FRAGMENT_SIZE", "1000000"))
+        self._election_n_zeros = (
+            election_n_zeros
+            if election_n_zeros is not None
+            else int(os.getenv("POOL_ELECTION_N_ZEROS", "2"))
+        )
+        self._election_thread: threading.Thread | None = None
+        self._election_result = False
+        self._election_in_progress = False
         pool_is_leader.set(0)
 
     def wire(self) -> None:
@@ -293,16 +302,60 @@ class PoolCoordinator:
             self._auto_miner_thread.join(timeout=5)
             self._auto_miner_thread = None
 
+    def _run_election(self) -> None:
+        from worker_pkg.pool_coordinator.election import run_pool_election
+        try:
+            won = run_pool_election(
+                self.redis,
+                self.pool_id,
+                n_zeros=self._election_n_zeros,
+                lease_key=self.lease_key,
+                lease_ttl=self.lease_ttl,
+                clock=self.now,
+            )
+            self._election_result = won
+        except Exception:
+            log.exception("pool %s: error inesperado durante la elección", self.pool_id)
+            self._election_result = False
+        finally:
+            self._election_in_progress = False
+
+    def _maybe_start_election(self) -> None:
+        if self._election_in_progress:
+            return
+        current_leader = self.redis.get(self.lease_key)
+        if current_leader is not None and current_leader != self.pool_id:
+            return
+        self._election_in_progress = True
+        self._election_result = False
+        t = threading.Thread(target=self._run_election, daemon=True,
+                             name=f"pool-election-{self.pool_id}")
+        self._election_thread = t
+        t.start()
+
     def tick(self) -> None:
         now = self.now()
         self._purge_stale_miners()
+
+        # Recoger resultado de elección completada
+        if (not self.is_leader
+                and self._election_thread is not None
+                and not self._election_thread.is_alive()):
+            if self._election_result:
+                self.is_leader = True
+                pool_is_leader.set(1)
+                log.info("pool coordinator %s ganó la elección, asumiendo liderazgo",
+                         self.pool_id)
+            self._election_thread = None
+
         if now - self._last_lease_renew >= 3.0:
             self._last_lease_renew = now
             if self.is_leader:
                 if not self.renew_leadership():
                     return
             else:
-                self.try_acquire_leadership()
+                self._maybe_start_election()
+
         if not self.is_leader:
             return
         if now - self._last_keepalive >= self.keepalive_interval:

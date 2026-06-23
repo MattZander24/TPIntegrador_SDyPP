@@ -41,12 +41,16 @@ en *cabezas contadas*.
 
 La idea original del proyecto es **mejorar el algoritmo Bully**: en lugar de
 elegir coordinador por el mayor ID (criterio arbitrario), se elige por **prueba
-de esfuerzo real**. Esto se aplica en dos lugares:
+de esfuerzo real**. Esto se aplica en tres lugares:
 
 - **Gobierno:** ganar el derecho a promulgar/derogar una ley es "ganarle al
   resto" resolviendo el PoW primero.
 - **Sucesión del coordinador (NCT):** si el coordinador cae, su sucesor se elige
   con un mini-desafío de PoW entre los candidatos, no por ID.
+- **Elección del Pool Coordinator:** si el pool líder cae, los candidatos
+  compiten con un mini-PoW sobre Redis (sin RabbitMQ). El nodo más potente —
+  normalmente el que tiene GPU — suele ganar, que es exactamente quien debería
+  coordinar la facción.
 
 ---
 
@@ -135,6 +139,8 @@ Redis es la fuente de verdad del estado. Claves principales:
 | `window_counter` | contador | Número monótono de ventanas (base del cooldown). |
 | `nct:leader` | string (TTL) | **Lease de liderazgo del NCT** (quién es el coordinador activo). |
 | `nct:last_author` | string | Último autor cuya ley entró a ventana (para el round-robin). |
+| `pool:leader` | string (TTL) | **Lease de liderazgo del Pool Coordinator** (una clave por pool). |
+| `pool:election:<epoch>` | string (TTL) | **Claim atómico de elección del pool** (SET NX gana la época; evita que dos candidatos asuman el liderazgo en la misma ventana de tiempo). |
 
 > **Las claves privadas de los individuos NUNCA se persisten.** Solo circula la
 > `author_pubkey`. La clave privada vive y firma exclusivamente en el navegador
@@ -418,27 +424,52 @@ Redis es la **fuente de verdad** y un **punto único de fallo** del estado.
   más (o vencen si `n` es alto), lo cual es el comportamiento esperado.
 
 ### 8.9 Se cae el Pool Coordinator
-- **Liderazgo de pool:** el Pool Coordinator usa un **lease en Redis**
-  (`pool:leader`, TTL 10 s). Cada réplica llama a `tick()` cada ~1 s (cableado
-  en `main.py` como `start_consuming(tick=pc.tick, ...)`). Solo el líder emite
-  keep-alives al NCT. Si el líder cae, el lease expira en ≤10 s; la réplica
-  sobreviviente lo adquiere en su siguiente `tick()` y toma el relevo.
-- **Auto-minería:** cada réplica tiene su propio `_auto_mine_loop` corriendo en
-  paralelo. Como ambas reciben el desafío del topic `desafio_activo` y fragmentan
-  en su propia `_pending_fragments`, el pod sobreviviente **ya tiene el trabajo
-  en memoria** y sigue minando sin interrupción.
-- **Pool-miners conectados:** al caer el pod, los miners que le hacían HTTP
-  polling detectan el fallo en el siguiente heartbeat:
-  - Si el coordinator **responde `ok:false`** (pod sobreviviente vía el Service
-    de Kubernetes, que no conoce el `miner_id` del pod caído) → el miner resetea
-    `_registered = False` y **se re-registra automáticamente** ante la réplica
-    activa (`pool_worker.py`, loop de re-registro).
-  - Si el coordinator **no responde** (HTTP falla mientras se reprograma el pod)
-    → el miner espera y reintenta; **no se re-registra** en falso, evita perder
-    el `miner_id` con un coordinator que vuelve.
-- **Efecto neto:** la facción "pool" pierde capacidad durante ≤10 s (tiempo del
-  lease) + el tiempo de re-registro de los miners (~10-15 s). Los workers
-  standalone y otros pools siguen compitiendo durante ese hueco.
+
+El Pool Coordinator usa un **lease en Redis** (`pool:leader`, TTL 10 s). Solo el
+líder emite keep-alives al NCT. Al caer, el lease expira; los candidatos
+restantes entran en **elección Bully por esfuerzo** — el mismo patrón que el NCT,
+pero implementado íntegramente sobre Redis (sin RabbitMQ).
+
+**Protocolo de elección del pool (`pool_coordinator/election.py`):**
+
+1. `tick()` detecta que `pool:leader` no existe y que no hay elección en curso.
+2. Lanza un **thread de elección** (`_maybe_start_election`).
+3. El thread calcula el seed: `{last_block_hash}:{epoch}` donde
+   `epoch = floor(time() / 30)` — el mismo valor en todos los candidatos
+   sincronizados por reloj.
+4. Resuelve el mini-PoW (`POOL_ELECTION_N_ZEROS`, default 2 ceros); con GPU
+   esto tarda microsegundos, con CPU tarda algo más — **el nodo más potente suele
+   ganar**.
+5. Intenta **`SET NX pool:election:{epoch} {pool_id}`** — solo uno puede ganar
+   (atomicidad garantizada por Redis).
+   - Si gana el `SET NX`: hace `SET pool:leader {pool_id} EX {ttl}` y retorna `True`.
+   - Si pierde (otro se adelantó): retorna `False` y sigue como follower.
+6. El `tick()` siguiente detecta que el thread terminó, lee `_election_result` y
+   actualiza `is_leader = True`.
+
+**Salvaguardas:**
+- Si la época cambia durante el PoW (computo muy lento), el thread aborta y el
+  `tick()` siguiente reinicia la elección con la época actual.
+- Si ya hay un líder con TTL alto cuando `tick()` corre, `_maybe_start_election`
+  no lanza thread (el líder está vivo).
+- `try_acquire_leadership()` sigue disponible para setup inicial / tests (SET NX
+  directo, sin PoW).
+
+**Auto-minería y pool-miners:**
+- Cada réplica tiene su propio `_auto_mine_loop`. Como ambas reciben el desafío
+  del topic `desafio_activo` y fragmentan en su propia `_pending_fragments`, el
+  pod sobreviviente **ya tiene trabajo en memoria** y sigue minando sin
+  interrupción.
+- Los pool-miners conectados detectan la caída en el siguiente heartbeat:
+  - **Coordinator responde `ok:false`** (pod nuevo via Service de Kubernetes, que
+    no conoce el `miner_id` del pod caído) → el miner resetea `_registered =
+    False` y **se re-registra automáticamente** ante la réplica activa.
+  - **No responde** (HTTP falla mientras se reprograma el pod) → el miner espera
+    y reintenta; no se re-registra en falso.
+
+**Efecto neto:** la facción "pool" pierde capacidad durante ≤10 s (tiempo del
+lease) + el tiempo de la elección (milisegundos con GPU, segundos con CPU solo) +
+el tiempo de re-registro de los miners (~10-15 s).
 
 ### 8.10 Se cae un Pool Miner
 - Es un cliente HTTP puro. Si cae, el Pool Coordinator lo detecta porque deja de
@@ -540,7 +571,7 @@ gana, que es exactamente la filosofía de toda la red VoxChain.
 | Dos `primary` arrancan juntos | SETNX: solo uno adquiere; el otro arranca follower. |
 | Un follower roba mensajes de las colas de trabajo | *Gating* por liderazgo: el follower nunca se suscribe a `propuestas`/`respuesta_nonce`. |
 | Reentrega de un mensaje ya procesado | Sets de idempotencia (`_solved` en worker/pool); el NCT re-verifica todo. |
-| Dos pool-coordinators activos | Lease `pool:leader` en Redis (TTL 10 s). |
+| Dos pool-coordinators compiten al morir el líder | Elección Bully por PoW: seed compartido + `SET NX pool:election:{epoch}` en Redis; solo uno puede ganar el claim atómico. |
 
 **Nota honesta:** `elect_acquire_leadership` es GET+SET (no atómico). La
 atomicidad efectiva la dan el backoff del PoW (en condiciones normales solo un
@@ -614,7 +645,7 @@ candidato llega ahí) y el margen temporal corto. Está documentado como tal.
 | **Transaction Pool** | Ventana puede vencer | Réplicas + HPA; stateless | No |
 | **Worker** | Menos throughput | KEDA/HPA levanta otros; fragmentos redundantes | No |
 | **Sin GPU** | Ventanas más lentas | Escalado CPU (Pilar 3); dificultad NO baja | No |
-| **Pool Coordinator** | Pool pierde capacidad ≤10 s | Lease `pool:leader` (tick activo); otra réplica toma; miners se re-registran solos | No |
+| **Pool Coordinator** | Pool pierde capacidad ≤10 s + elección | Elección Bully por PoW sobre Redis; otra réplica asume; miners se re-registran solos | No |
 | **Pool Miner** | Menos capacidad del pool | Purga por keep-alive (15 s); re-registro automático al volver | No |
 | **voxchain-api** | Frontend sin servicio | Réplicas + HPA; consenso sigue | No |
 | **Frontend** | UI caída | Estático, sin impacto backend | No |

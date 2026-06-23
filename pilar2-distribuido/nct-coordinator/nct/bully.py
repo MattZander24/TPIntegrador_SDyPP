@@ -11,22 +11,10 @@ from __future__ import annotations
 import logging
 import time
 
-from common.blockchain.challenge import compute_hash, prefix_for_zeros, verify_nonce
+from common.blockchain.challenge import compute_hash, prefix_for_zeros, solve_mini_challenge, verify_nonce
 
 log = logging.getLogger("voxchain.nct.bully")
 
-
-def solve_mini_challenge(seed: str, n_zeros: int, max_iter: int = 10_000_000) -> int | None:
-    """Resuelve el mini-desafío de elección: nonce con ``n_zeros`` ceros sobre ``seed``.
-
-    El ``seed`` lo comparten todos los candidatos (p. ej. el hash del último
-    bloque + una época de elección), de modo que la competencia sea justa.
-    """
-    prefix = prefix_for_zeros(n_zeros)
-    for nonce in range(max_iter):
-        if compute_hash(seed, nonce).startswith(prefix):
-            return nonce
-    return None
 
 
 def elect_new_nct(candidate_solutions: list[dict], seed: str, n_zeros: int) -> str | None:

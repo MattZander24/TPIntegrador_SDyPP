@@ -71,3 +71,16 @@ def verify_nonce(partial_hash_base: str, nonce: int, n_zeros_required: int):
     hash_hex = compute_hash(partial_hash_base, nonce)
     ok = hash_hex.startswith(prefix_for_zeros(n_zeros_required))
     return ok, hash_hex
+
+
+def solve_mini_challenge(seed: str, n_zeros: int, max_iter: int = 10_000_000) -> int | None:
+    """Encuentra el primer nonce tal que hash(seed+nonce) tenga ``n_zeros`` ceros.
+
+    Compartido por el bully del NCT y la elección del pool coordinator para que
+    ambos usen exactamente el mismo algoritmo de PoW.
+    """
+    prefix = prefix_for_zeros(n_zeros)
+    for nonce in range(max_iter):
+        if compute_hash(seed, nonce).startswith(prefix):
+            return nonce
+    return None
