@@ -76,14 +76,21 @@ spec:
                 configMapKeyRef:
                   name: worker-config
                   key: redis-host
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: password
             - name: REDIS_URL
-              value: "redis://$(REDIS_HOST):6379/0"
+              value: "redis://:$(REDIS_PASSWORD)@$(REDIS_HOST):6379/0"
             - name: WORKER_CAPACITY
               value: "1"
             - name: LOG_DIR
               value: /var/log/voxchain
             - name: MINER_CPU_SCRIPT
               value: /app/pilar1-minero/cpu/src/brute_force.py
+            - name: WORKER_PRIVKEY_PEM
+              value: /keys/privkey.pem
           livenessProbe:
             httpGet:
               path: /health
@@ -163,8 +170,13 @@ spec:
                 configMapKeyRef:
                   name: worker-config
                   key: redis-host
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: password
             - name: REDIS_URL
-              value: "redis://$(REDIS_HOST):6379/0"
+              value: "redis://:$(REDIS_PASSWORD)@$(REDIS_HOST):6379/0"
             - name: WORKER_CAPACITY
               value: "1"
             - name: LOG_DIR
@@ -265,8 +277,13 @@ spec:
                 configMapKeyRef:
                   name: worker-config
                   key: redis-host
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: password
             - name: REDIS_URL
-              value: "redis://$(REDIS_HOST):6379/0"
+              value: "redis://:$(REDIS_PASSWORD)@$(REDIS_HOST):6379/0"
             - name: WORKER_CAPACITY
               value: "1"
             - name: LOG_DIR
@@ -350,8 +367,13 @@ spec:
                 configMapKeyRef:
                   name: worker-config
                   key: redis-host
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: password
             - name: REDIS_URL
-              value: "redis://$(REDIS_HOST):6379/0"
+              value: "redis://:$(REDIS_PASSWORD)@$(REDIS_HOST):6379/0"
             - name: WORKER_CAPACITY
               value: "1"
             - name: LOG_DIR
@@ -435,8 +457,13 @@ spec:
                 configMapKeyRef:
                   name: worker-config
                   key: redis-host
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-credentials
+                  key: password
             - name: REDIS_URL
-              value: "redis://$(REDIS_HOST):6379/0"
+              value: "redis://:$(REDIS_PASSWORD)@$(REDIS_HOST):6379/0"
             - name: WORKER_CAPACITY
               value: "1"
             - name: LOG_DIR

@@ -3,6 +3,8 @@
 # NCT (primary/standby) y API en el namespace voxchain, más el pool-coordinator
 # en g-git-push-cv (usa Redis para el lease pool:leader). RabbitMQ NO lleva
 # NetworkPolicy porque se expone a Internet por diseño (LoadBalancer + TLS).
+# El bloque ipBlock 0.0.0.0/0 permite el acceso desde el LoadBalancer externo
+# (workers k3s); la autenticación queda en manos de la contraseña de Redis.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -24,6 +26,8 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: g-git-push-cv
+        - ipBlock:
+            cidr: 0.0.0.0/0
       ports:
         - protocol: TCP
           port: 6379
