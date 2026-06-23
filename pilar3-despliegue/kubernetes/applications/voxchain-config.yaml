@@ -5,6 +5,12 @@ metadata:
   namespace: voxchain
 data:
   N_ZEROS: "4"
+  # Firma de propuestas (A-01 / AGENT.md 3.1). Migración: arrancar en "false"
+  # (acepta no firmadas y loguea; una firma inválida siempre se rechaza) y pasar
+  # a "true" cuando todos los productores firman. Debe quedar igual en NCT y API.
+  REQUIRE_SIGNATURES: "false"
+  # Anti-replay: antigüedad máxima de created_at en una propuesta firmada (segundos).
+  PROPOSAL_MAX_AGE_SECONDS: "300"
   WINDOW_SECONDS_PROMULGACION: "120"
   WINDOW_SECONDS_DEROGACION: "180"
   COOLDOWN_WINDOWS_NEW: "4"

@@ -9,6 +9,10 @@ x-app-env: &app-env
   REDIS_URL: redis://redis:6379/0
   N_ZEROS: "4"
   HEALTH_PORT: "8080"
+  # Firma de propuestas (A-01). "false" = migración (acepta no firmadas, rechaza
+  # firmas inválidas); "true" = rechazo duro. Compartido por NCT y API vía el anchor.
+  REQUIRE_SIGNATURES: "false"
+  PROPOSAL_MAX_AGE_SECONDS: "300"
 
 services:
   rabbitmq:
