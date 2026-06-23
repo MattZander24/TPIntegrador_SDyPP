@@ -9,11 +9,11 @@ metadata:
 spec:
   tls:
     - hosts:
-        - voxchain.__INGRESS_IP__.sslip.io
-        - grafana.voxchain.__INGRESS_IP__.sslip.io
+        - voxchain.34.95.143.13.sslip.io
+        - grafana.voxchain.34.95.143.13.sslip.io
       secretName: voxchain-tls
   rules:
-    - host: voxchain.__INGRESS_IP__.sslip.io
+    - host: voxchain.34.95.143.13.sslip.io
       http:
         paths:
           - path: /api
@@ -30,7 +30,7 @@ spec:
                 name: voxchain-frontend
                 port:
                   number: 80
-    - host: grafana.voxchain.__INGRESS_IP__.sslip.io
+    - host: grafana.voxchain.34.95.143.13.sslip.io
       http:
         paths:
           - path: /

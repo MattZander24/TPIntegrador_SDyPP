@@ -17,7 +17,7 @@ spec:
       containers:
         - name: pool-coordinator
           # Pool Coordinator ahora es el mismo worker en modo pool-coordinator
-          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker:latest
+          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker:a7ac6d2
           imagePullPolicy: Always
           ports:
             - containerPort: 8080

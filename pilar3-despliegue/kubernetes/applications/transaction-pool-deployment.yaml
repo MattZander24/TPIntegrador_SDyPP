@@ -1,2 +1,0 @@
-# DEPRECATED: Transaction Pool eliminado. La fragmentación la hace cada Pool
-# Coordinator internamente (embebido en el worker). No apply.

@@ -1,3 +1,0 @@
-# DEPRECATED: Replaced by voxchain-ingress.yaml (unified with frontend, nginx + TLS).
-# Delete this file after confirming voxchain-ingress.yaml works.
-# Old GCE Ingress kept for reference only — do NOT apply.

@@ -323,7 +323,7 @@ resource "helm_release" "kube_prometheus_stack" {
         enabled = false
       }
       extraEnvVars = {
-        GF_SERVER_ROOT_URL = "https://grafana.voxchain.__INGRESS_IP__.sslip.io"
+        GF_SERVER_ROOT_URL = "https://grafana.voxchain.34.95.143.13.sslip.io"
       }
       persistence = {
         enabled = true
@@ -343,7 +343,7 @@ resource "helm_release" "kube_prometheus_stack" {
         }
       }
     }
-  }]
+  })]
 
   depends_on = [google_container_cluster.cluster]
 }
