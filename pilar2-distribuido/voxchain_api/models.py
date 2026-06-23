@@ -94,3 +94,23 @@ class PoolHealth(BaseModel):
 class SSEEvent(BaseModel):
     event_type: str
     data: dict
+
+
+class DemoAccount(BaseModel):
+    username: str
+    worker_id: str
+    mode: str
+    pubkey: str
+    status: str  # 'available' | 'occupied'
+    occupied_by: Optional[str] = None  # session_id
+    occupied_at: Optional[str] = None
+
+
+class ReserveAccountRequest(BaseModel):
+    username: str
+    session_id: str
+
+
+class ReleaseAccountRequest(BaseModel):
+    username: str
+    session_id: str

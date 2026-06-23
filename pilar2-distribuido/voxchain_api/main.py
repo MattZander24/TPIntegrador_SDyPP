@@ -17,7 +17,7 @@ from common.logging_setup import setup_logging
 from common.metrics import api_http_request_duration_seconds, api_http_requests_total
 
 from voxchain_api.config import config
-from voxchain_api.routers import chain, health, laws, windows, workers
+from voxchain_api.routers import accounts, chain, health, laws, windows, workers
 from voxchain_api.services.redis_reader import RedisReader
 
 # Lifespan manager for SSE background task
@@ -80,6 +80,7 @@ async def metrics():
                              media_type="text/plain; version=0.0.4")
 
 # Include routers
+app.include_router(accounts.router)
 app.include_router(chain.router)
 app.include_router(laws.router)
 app.include_router(windows.router)
