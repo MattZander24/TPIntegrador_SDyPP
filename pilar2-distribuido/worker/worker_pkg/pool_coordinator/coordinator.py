@@ -12,6 +12,7 @@ import os
 import threading
 import time
 from collections import deque
+from datetime import datetime, timezone
 from threading import Lock
 
 from common.blockchain.challenge import prefix_for_zeros
@@ -68,7 +69,6 @@ class PoolCoordinator:
         self._last_lease_renew = 0.0
         self.is_leader = False
         self._miner_counter = 0
-        self._next_miner_idx = 0
         self._running = False
         self._auto_miner_thread: threading.Thread | None = None
         self.nonce_space = int(os.getenv("NONCE_SPACE", "50000000"))
@@ -91,8 +91,15 @@ class PoolCoordinator:
         pipe = self.redis.pipeline()
         pipe.get(self.lease_key)
         pipe.pttl(self.lease_key)
-        current, ttl = pipe.execute()
-        if current == (self.pool_id.encode() if isinstance(current, str) else current):
+        current, _ttl = pipe.execute()
+        if current is None:
+            self.redis.setex(self.lease_key, self.lease_ttl, self.pool_id)
+            return True
+        if isinstance(current, str):
+            same = (current == self.pool_id)
+        else:
+            same = (current == self.pool_id.encode())
+        if same:
             self.redis.setex(self.lease_key, self.lease_ttl, self.pool_id)
             return True
         self.is_leader = False
@@ -125,7 +132,7 @@ class PoolCoordinator:
     def _fresh_miners(self) -> list[tuple[str, dict]]:
         cutoff = self.now() - KEEPALIVE_TTL
         return [(mid, info) for mid, info in self._miners.items()
-                if info["last_seen"] >= cutoff and not info["busy"]]
+                if info["last_seen"] >= cutoff]
 
     def _purge_stale_miners(self) -> None:
         cutoff = self.now() - KEEPALIVE_TTL
@@ -143,26 +150,7 @@ class PoolCoordinator:
                 return None
             if not self._pending_fragments:
                 return None
-            fresh = self._fresh_miners()
-            if not fresh:
-                return None
-            idx = self._next_miner_idx % len(fresh)
-            self._next_miner_idx += 1
-            fragment = self._pending_fragments[0]
-            space = fragment["range_max"] - fragment["range_min"]
-            total = len(fresh)
-            chunk = max(1, space // total)
-            rmin = fragment["range_min"] + idx * chunk
-            rmax = min(fragment["range_min"] + (idx + 1) * chunk, fragment["range_max"])
-            if rmin >= fragment["range_max"]:
-                return None
-            self._pending_fragments.popleft()
-            for _ in range(idx):
-                dup = fragment.copy()
-                dup["range_min"] = rmin
-                dup["range_max"] = rmax
-                self._pending_fragments.appendleft(dup)
-            self._miners[miner_id]["busy"] = True
+            fragment = self._pending_fragments.popleft()
             pool_work_distributed_total.inc()
             return {
                 "voting_window_id": fragment["voting_window_id"],
@@ -170,8 +158,8 @@ class PoolCoordinator:
                 "action": fragment.get("action"),
                 "partial_hash_base": fragment["partial_hash_base"],
                 "n_zeros_required": fragment.get("n_zeros_required"),
-                "range_min": rmin,
-                "range_max": rmax,
+                "range_min": fragment["range_min"],
+                "range_max": fragment["range_max"],
             }
 
     def _get_auto_miner_fragment(self) -> dict | None:
@@ -181,9 +169,6 @@ class PoolCoordinator:
             return self._pending_fragments.popleft()
 
     def submit_result(self, miner_id: str, result: dict) -> bool:
-        with self._lock:
-            if miner_id in self._miners:
-                self._miners[miner_id]["busy"] = False
         wid = result.get("voting_window_id")
         nonce = result.get("nonce")
         hash_hex = result.get("block_hash_candidato")
@@ -231,6 +216,15 @@ class PoolCoordinator:
         wid = challenge.get("voting_window_id")
         if not wid or wid in self._solved:
             return
+        deadline_str = challenge.get("deadline", "")
+        if deadline_str:
+            try:
+                deadline_ts = datetime.fromisoformat(deadline_str).timestamp()
+                if self.now() > deadline_ts:
+                    log.info("pool %s ventana %s ya venció, saltando", self.pool_id, wid)
+                    return
+            except (ValueError, TypeError):
+                pass
         if not self._check_voting_policy(challenge):
             log.info("pool %s rechaza ventana %s por política de voto",
                      self.pool_id, wid)

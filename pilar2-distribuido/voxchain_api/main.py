@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from prometheus_client import exposition
 
+from common.logging_setup import setup_logging
 from common.metrics import api_http_request_duration_seconds, api_http_requests_total
 
 from voxchain_api.config import config
@@ -24,6 +25,7 @@ from voxchain_api.services.redis_reader import RedisReader
 async def lifespan(app: FastAPI):
     """Manage lifespan of the application."""
     # Startup
+    setup_logging("voxchain-api")
     redis = RedisReader()
     app.state.redis = redis
     app.state.sse_clients = set()

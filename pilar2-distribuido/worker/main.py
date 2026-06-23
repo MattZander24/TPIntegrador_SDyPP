@@ -27,8 +27,6 @@ from worker_pkg.miner import _gpu_available, run_miner
 from worker_pkg.pool_worker import PoolWorker
 from worker_pkg.pool_coordinator import PoolCoordinator
 from worker_pkg.standalone_worker import StandaloneWorker
-import logging
-log = logging.getLogger("worker")
 
 log = logging.getLogger("voxchain.worker")
 

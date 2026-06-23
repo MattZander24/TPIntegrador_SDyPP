@@ -41,7 +41,7 @@ class WorkerSigner:
         """``winning_node_or_pool`` a publicar: la pubkey si firmamos, si no el id."""
         return self.pubkey if self.enabled else fallback_id
 
-    def sign_nonce(self, voting_window_id: str, nonce, winner: str):
+    def sign_nonce(self, voting_window_id: str, nonce: int, winner: str):
         """Firma ``voting_window_id|nonce|winner`` o devuelve ``None`` si no hay clave."""
         if not self.enabled:
             return None

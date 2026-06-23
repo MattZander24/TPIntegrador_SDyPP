@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from datetime import datetime, timezone
 
 from common.blockchain.challenge import prefix_for_zeros
 from common.metrics import worker_busy, worker_has_gpu, worker_nonces_found_total
@@ -46,6 +47,15 @@ class StandaloneWorker:
         if action in self._rejected_actions:
             log.info("%s rechaza ventana %s (acción=%s)", self.worker_id, wid, action)
             return
+        deadline_str = challenge.get("deadline", "")
+        if deadline_str:
+            try:
+                deadline_ts = datetime.fromisoformat(deadline_str).timestamp()
+                if self.now() > deadline_ts:
+                    log.info("%s ventana %s ya venció, saltando", self.worker_id, wid)
+                    return
+            except (ValueError, TypeError):
+                pass
 
         base = challenge["partial_hash_base"]
         prefix = prefix_for_zeros(int(challenge["n_zeros_required"]))

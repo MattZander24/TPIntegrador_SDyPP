@@ -12,7 +12,7 @@ import time
 import urllib.error
 import urllib.request
 
-log = logging.getLogger("voxchain.miner")
+log = logging.getLogger("voxchain.worker.pool")
 
 
 class PoolWorker:
@@ -77,12 +77,15 @@ class PoolWorker:
         log.warning("no se pudo registrar en pool")
         return False
 
-    def heartbeat(self) -> bool:
+    def heartbeat(self):
+        """Retorna True si el coordinator reconoce al miner, False si no lo reconoce,
+        None si el coordinator está caído (HTTP error)."""
         if not self.miner_id:
-            return False
+            return None
         resp = self._post("/heartbeat", {"miner_id": self.miner_id})
-        ok = resp and resp.get("ok", False)
-        return bool(ok)
+        if resp is None:
+            return None
+        return resp.get("ok", False)
 
     def request_work(self) -> dict | None:
         if not self.miner_id:
@@ -120,11 +123,13 @@ class PoolWorker:
                 now = self.now()
                 if now - self._last_hb >= self.heartbeat_interval:
                     self._last_hb = now
-                    resp = self._post("/heartbeat", {"miner_id": self.miner_id})
-                    if resp is not None and not resp.get("ok", False):
+                    hb = self.heartbeat()
+                    if hb is False:
                         log.warning("coordinator no reconoce miner %s, re-registrando", self.miner_id)
                         self._registered = False
                         break
+                    if hb is None:
+                        log.debug("coordinator no responde, reintentando...")
 
                 task = self.request_work()
                 if not task:
