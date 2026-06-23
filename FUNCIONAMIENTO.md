@@ -102,11 +102,6 @@ entender los fallos:
 - **Topics / exchanges de broadcast** (`desafio_activo`, `nct.heartbeat`):
   **fan-out**, cada suscriptor recibe **una copia** del mensaje.
 
-> La cola `tareas_trp` y el servicio Transaction Pool fueron eliminados. La
-> fragmentación del espacio de nonces la realiza cada Pool Coordinator
-> internamente vía HTTP hacia sus pool-miners. Los workers standalone minan
-> el espacio completo directamente.
-
 Los flujos:
 
 | # | Flujo | Tipo | De → A | Contenido |
@@ -116,9 +111,11 @@ Los flujos:
 | 3 | `respuesta_nonce` | cola | red → NCT | El nonce encontrado (`voting_window_id`, `nonce`, `winning_node_or_pool`). |
 | 4 | `nct.heartbeat` | **topic** | NCT líder → followers | Latido periódico del líder (cada `HEARTBEAT_INTERVAL` ≈ 3 s). |
 
-> **Nota:** la cola `nct_election` y el servicio Transaction Pool (TrP)
-> fueron eliminados. El failover del NCT usa Redis directamente (ver §9), y
-> la fragmentación del nonce la hace cada Pool Coordinator internamente.
+> **Elementos eliminados respecto al diseño original:** las colas `tareas_trp`,
+> `keepalive_trp` y `nct_election`, y el servicio Transaction Pool (TrP). El
+> failover del NCT usa Redis directamente (ver §9). La fragmentación del espacio
+> de nonces la realiza cada Pool Coordinator internamente vía HTTP hacia sus
+> pool-miners; los workers standalone minan el espacio completo directamente.
 
 **Garantías de RabbitMQ usadas:**
 - Mensajes **persistentes** (`delivery_mode=2`) y colas **durables** → sobreviven
@@ -227,18 +224,18 @@ NCT (líder)  — handle_nonce_response()
     │ 20. ¿Es para la ventana activa? ¿Llegó antes del deadline? Si no → descarta.
     │ 21. ¿El que gana NO es el autor de la ley? (el autor no vota su propia ley)
     │ 22. verify_nonce(): recalcula el MD5 y comprueba los n ceros.
-   │ 24. CIERRE ATÓMICO: try_seal_window() (SETNX en Redis). El PRIMER nonce
+   │ 23. CIERRE ATÓMICO: try_seal_window() (SETNX en Redis). El PRIMER nonce
    │     válido gana; los demás ven la clave ya puesta y se descartan.
-   │ 25. _seal(): arma el bloque, lo encadena (previous_hash), lo guarda en Redis.
-   │ 26. Marca la ley PROMULGATED (o REPEALED si era derogación).
-   │ 27. Limpia active_window y abre la siguiente ventana (maybe_open_window()).
+   │ 24. _seal(): arma el bloque, lo encadena (previous_hash), lo guarda en Redis.
+   │ 25. Marca la ley PROMULGATED (o REPEALED si era derogación).
+   │ 26. Limpia active_window y abre la siguiente ventana (maybe_open_window()).
    ▼
 voxchain-api  — sse_polling_task()
-   │ 28. Detecta el bloque nuevo / cambio de ventana / cambio de status en Redis.
-   │ 29. Emite eventos SSE (block_added, window_opened, law_updated).
+   │ 27. Detecta el bloque nuevo / cambio de ventana / cambio de status en Redis.
+   │ 28. Emite eventos SSE (block_added, window_opened, law_updated).
    ▼
 Frontend
-     30. Actualiza la UI en tiempo real: la ley aparece promulgada en la cadena.
+     29. Actualiza la UI en tiempo real: la ley aparece promulgada en la cadena.
 ```
 
 **Duración de la ventana:** `WINDOW_SECONDS_PROMULGACION` (60 s) o

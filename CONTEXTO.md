@@ -139,44 +139,42 @@ VoxChain no es un monolito: está compuesto por múltiples servicios que se comu
 ```
 pilar2-distribuido/
 ├── common/                  # Código compartido entre servicios
-│   ├── blockchain.py        # Lógica de blockchain y validación
-│   ├── storage.py           # Abstracción de Redis
-│   ├── messaging.py         # Abstracción de RabbitMQ
-│   ├── health.py            # Endpoints de health
-│   ├── logging.py           # Configuración de logs
-│   └── config.py            # Configuración centralizada
+│   ├── blockchain/          # PoW (challenge.py), bloques, cadena, compresión
+│   ├── identity/            # Firma Ed25519 (signing.py)
+│   ├── messaging/           # Abstracción de RabbitMQ (base.py, rabbitmq.py)
+│   ├── storage/             # Abstracción de Redis (redis_store.py → VoxChainStore)
+│   ├── config.py            # Configuración centralizada (variables de entorno)
+│   ├── health.py            # Servidor HTTP de health check
+│   ├── logging_setup.py     # Logs estructurados en JSON
+│   └── metrics.py           # Métricas Prometheus (contadores, gauges)
 ├── nct-coordinator/         # Nodo Coordinador de Tareas (NCT)
 │   ├── nct/
-│   │   ├── coordinator.py   # Lógica principal del NCT
-│   │   ├── bully.py         # Algoritmo de elección de líder
-│   │   └── window.py        # Gestión de ventanas de votación
-│   ├── scripts/
-│   │   └── propose_law.py   # Script para proponer leyes
+│   │   ├── coordinator.py   # Lógica principal: ventanas, nonces, cadena
+│   │   ├── monitor.py       # Monitor de heartbeat y failover por lease Redis
+│   │   └── queue_logic.py   # Round-robin de autores y cola de leyes
 │   ├── main.py              # Punto de entrada
 │   ├── Dockerfile           # Imagen Docker
 │   └── tests/               # Pruebas unitarias
-├── transaction-pool/        # Pool de Transacciones (TrP)
-│   ├── trp/
-│   │   ├── pool.py          # Servicio principal del TrP
-│   │   └── fragmentation.py # Lógica de fragmentación de rangos
-│   ├── main.py              # Punto de entrada
-│   ├── Dockerfile           # Imagen Docker
-│   └── README.md            # Documentación específica
 ├── worker/                  # Workers de minería
 │   ├── worker_pkg/
-│   │   ├── worker.py        # Lógica del worker
-│   │   └── miner.py         # Invocación al minero (Pilar 1)
+│   │   ├── standalone_worker.py  # Worker independiente (mina rango completo)
+│   │   ├── miner.py              # Puente al binario Pilar 1 (GPU CUDA / CPU)
+│   │   ├── pool_coordinator/     # Pool Coordinator (agrega miners vía HTTP)
+│   │   │   ├── coordinator.py    # Lógica: fragmenta, distribuye, auto-mina
+│   │   │   └── election.py       # Elección Bully por PoW + Redis NX
+│   │   ├── pool_worker.py        # Pool Miner (cliente HTTP del coordinator)
+│   │   └── admin_server.py       # HTTP server :9001 del Pool Coordinator
 │   ├── main.py              # Punto de entrada
 │   ├── Dockerfile           # Imagen Docker
 │   └── tests/               # Pruebas unitarias
 ├── voxchain_api/            # API REST del sistema
-│   ├── api/
-│   │   └── endpoints.py     # Endpoints HTTP
-│   ├── main.py              # Punto de entrada
+│   ├── routers/             # Endpoints: /laws /chain /windows /workers /health
+│   ├── services/            # rabbitmq_publisher.py, redis_reader.py
+│   ├── models.py            # Modelos Pydantic
+│   ├── main.py              # Punto de entrada (FastAPI)
 │   └── Dockerfile           # Imagen Docker
-├── voxchain-frontend/       # Frontend web
-│   ├── src/                 # Código fuente (React/Angular)
-│   ├── public/              # Assets estáticos
+├── voxchain-frontend/       # Frontend web (Angular)
+│   ├── src/                 # Código fuente Angular
 │   └── Dockerfile           # Imagen Docker
 ├── tests/                   # Pruebas de integración
 │   └── test_e2e.py          # Test extremo a extremo
@@ -200,31 +198,42 @@ pilar2-distribuido/
 
 **Analogía:** Es como el presidente del parlamento que organiza las votaciones.
 
-#### 2. Transaction Pool (TrP)
-**Rol:** Fragmenta el trabajo para que múltiples workers puedan colaborar.
+#### 2. Worker Standalone
+**Rol:** Minero independiente que resuelve el PoW por cuenta propia.
 
 **Responsabilidades:**
-- Recibe desafíos del NCT
-- Divide el espacio de búsqueda del nonce en fragmentos
-- Publica fragmentos en una cola para que los workers los consuman
-- Recibe keep-alives de los workers para conocer su capacidad
-- Loguea cuando no hay workers GPU disponibles
+- Se suscribe al topic `desafio_activo` (fan-out de RabbitMQ)
+- Mina el **rango completo** de nonces [0, NONCE_SPACE) con el motor de Pilar 1
+- Si tiene GPU, usa CUDA; si no, hace fallback automático a CPU
+- Publica el nonce encontrado a la cola `respuesta_nonce`
 
-**Analogía:** Es como un gerente de proyecto que divide una tarea grande en subtareas para un equipo.
+**Analogía:** Es un ciudadano que trabaja solo para resolver el problema matemático.
 
-#### 3. Workers
-**Rol:** Son los "mineros" que resuelven el PoW.
+#### 3. Pool Coordinator
+**Rol:** Agrega varios mineros bajo un mismo coordinador, como una "facción política".
 
 **Responsabilidades:**
-- Se suscriben a la cola de fragmentos del TrP
-- Toman un fragmento y lo minan usando el motor de Pilar 1
-- Si tienen GPU, usan CUDA; si no, usan CPU
-- Publican el nonce si lo encuentran
-- Envían keep-alives al TrP
+- Se suscribe al topic `desafio_activo` igual que un worker standalone
+- **Fragmenta internamente** el espacio de nonces en tramos de `FRAGMENT_SIZE`
+- Distribuye fragmentos a sus Pool Miners vía HTTP (puerto :9001)
+- También mina un fragmento propio en paralelo (auto-miner)
+- Publica el nonce ganador a `respuesta_nonce` en nombre del pool
+- Realiza una **elección Bully por PoW** cuando el coordinador líder cae (ver §8.8 de FUNCIONAMIENTO.md)
 
-**Analogía:** Son los trabajadores que ejecutan las subtareas asignadas.
+**Analogía:** Es un partido político con un líder que coordina a sus militantes.
 
-#### 4. voxchain-api
+#### 4. Pool Miner
+**Rol:** Minero que trabaja dentro de un pool, conectado al Pool Coordinator por HTTP.
+
+**Responsabilidades:**
+- Se registra en el Pool Coordinator (`POST /register`)
+- Envía heartbeats periódicos para no ser expulsado (`POST /heartbeat`)
+- Pide fragmentos de trabajo (`GET /work/next`) y los mina con Pilar 1
+- Devuelve el nonce encontrado (`POST /work/result`)
+
+**Analogía:** Es el militante del partido que ejecuta la tarea que le asigna el líder.
+
+#### 5. voxchain-api
 **Rol:** Expone una interfaz HTTP para interactuar con el sistema.
 
 **Responsabilidades:**
@@ -235,7 +244,7 @@ pilar2-distribuido/
 
 **Analogía:** Es como el mostrador de atención al público del gobierno.
 
-#### 5. voxchain-frontend
+#### 6. voxchain-frontend
 **Rol:** Interfaz gráfica para usuarios finales.
 
 **Responsabilidades:**
@@ -245,44 +254,53 @@ pilar2-distribuido/
 
 **Analogía:** Es como el sitio web del gobierno donde los ciudadanos tramitan cosas.
 
-#### 6. common/
+#### 7. common/
 **Rol:** Código compartido para evitar duplicación.
 
 **Contenido:**
-- `blockchain.py`: Lógica de validación de cadenas
-- `storage.py`: Abstracción de Redis (para usar fakeredis en tests)
-- `messaging.py`: Abstracción de RabbitMQ (para usar bus en memoria en tests)
-- `health.py`: Endpoints estándar de health
-- `logging.py`: Configuración de logs estructurados
-- `config.py`: Lectura de variables de entorno
+- `blockchain/`: PoW (MD5 + prefijo de n ceros), bloques, cadena, compresión de texto
+- `storage/`: Abstracción de Redis — `VoxChainStore` (permite usar fakeredis en tests)
+- `messaging/`: Abstracción de RabbitMQ — `Messaging` / `InMemoryBus` (para tests)
+- `identity/`: Firma y verificación Ed25519 (opcional, configurable)
+- `health.py`: Servidor HTTP de health check
+- `logging_setup.py`: Logs estructurados JSON compatibles con Prometheus/Grafana
+- `metrics.py`: Contadores y gauges exportados como métricas Prometheus
+- `config.py`: Lectura centralizada de variables de entorno
 
 ### Flujo de Mensajes (RabbitMQ)
 
-El sistema usa RabbitMQ como bus de mensajes. Hay 7 flujos definidos:
+El sistema usa RabbitMQ como bus de mensajes. Hay **4 flujos activos**:
 
-**Flujos principales (hacia/desde el NCT):**
-1. `propuestas` (cola): Ciudadano → NCT (propuesta de ley)
-2. `desafio_activo` (topic): NCT → Red (desafío de PoW)
-3. `respuesta_nonce` (cola): Red → NCT (nonce encontrado)
+| # | Canal | Tipo | De → A | Contenido |
+|---|---|---|---|---|
+| 1 | `propuestas` | **cola** | API/nodo → NCT | Propuesta de ley (`law_id`, `author_pubkey`, `text_hash`, `action`, texto comprimido) |
+| 2 | `desafio_activo` | **topic (fan-out)** | NCT → toda la red | Desafío de la ventana abierta (`voting_window_id`, `n_zeros_required`, `deadline`, `partial_hash_base`) |
+| 3 | `respuesta_nonce` | **cola** | Workers/Pools → NCT | Nonce encontrado (`voting_window_id`, `nonce`, `winning_node_or_pool`) |
+| 4 | `nct.heartbeat` | **topic (fan-out)** | NCT líder → followers | Latido periódico del líder (`nct_id`, `ts`) |
 
-**Flujos internos (TrP ↔ Workers):**
-4. `tareas_trp` (cola): TrP → Workers (fragmentos de nonces)
-5. `keepalive_trp` (cola): Workers → TrP (capacidad y estado)
-
-**Flujos de tolerancia a fallos (Bully algorithm):**
-6. `nct.heartbeat` (topic): NCT líder → NCTs standby
-7. `nct_election` (cola): NCTs standby → NCTs standby (elección)
+> **Eliminados:** `tareas_trp`, `keepalive_trp` (del Transaction Pool) y `nct_election`
+> (del Bully clásico). La fragmentación la hace el Pool Coordinator internamente vía HTTP.
+> El failover del NCT usa Redis directamente, sin mensajes de elección.
 
 ### Almacenamiento (Redis)
 
-Redis es la base de datos del sistema. Almacena:
+Redis es la base de datos y árbitro del sistema. Claves principales:
 
-- `law:*`: Información de leyes (estado, autor, texto)
-- `block:*`: Bloques de la blockchain
-- `window:*`: Ventanas de votación activas
-- `active_window`: ID de la ventana activa
-- `window_counter`: Contador de ventanas
-- `cooldown:*`: Cooldowns por autor
+| Clave | Estructura | Contenido |
+|---|---|---|
+| `law:<id>` | hash | Ley: autor, `text_hash`, `status`, `action`, texto comprimido |
+| `window:<id>` | hash | Ventana de votación: ley, acción, `n_zeros`, `deadline`, resultado, ganador |
+| `chain` | lista | Bloques en orden (historia de la blockchain) |
+| `law_queue` | lista | Leyes `pending_queue` esperando turno |
+| `active_window` | string | `voting_window_id` vigente (solo uno a la vez) |
+| `window_counter` | contador | Número monótono de ventanas (base del cooldown) |
+| `window_sealed:<id>` | string (NX, TTL) | **Guard atómico de cierre**: el primer nonce válido lo escribe con SETNX |
+| `cooldown:<pubkey>` | hash | Hasta qué ventana el autor no puede proponer |
+| `discarded_text_hashes` | set | Hashes de textos descartados (detecta reproposición idéntica) |
+| `nct:leader` | string (TTL) | **Lease de liderazgo del NCT** — árbitro del failover |
+| `nct:last_author` | string | Último autor que entró a ventana (para round-robin) |
+| `pool:leader` | string (TTL) | **Lease del Pool Coordinator** activo |
+| `pool:election:<epoch>` | string (NX, TTL) | **Claim atómico** de la elección del pool (SET NX) |
 
 ### Ejecución Local
 
@@ -304,8 +322,8 @@ Llevar el sistema a producción con infraestructura escalable, autoescalado y ob
 
 El sistema se despliega en dos clusters separados:
 
-1. **GKE (Google Kubernetes Engine)**: Servicios principales (NCT, TrP, API, Frontend, Redis, RabbitMQ)
-2. **k3s (Cluster GPU)**: Workers de minería con GPUs
+1. **GKE (Google Kubernetes Engine)**: Servicios principales (NCT primary + standby, API, Frontend, Redis, RabbitMQ)
+2. **k3s (Cluster GPU)**: Workers standalone + Pool Coordinator + Pool Miners con GPUs
 
 Esta separación permite escalar workers independientemente del resto del sistema.
 
@@ -316,7 +334,7 @@ pilar3-despliegue/
 ├── kubernetes/              # Manifiestos de Kubernetes
 │   ├── namespace.yaml       # Namespace voxchain
 │   ├── infrastructure/      # Redis, RabbitMQ, Secrets
-│   ├── applications/        # NCT, TrP, API, Frontend
+│   ├── applications/        # NCT, API, Frontend
 │   ├── hpa/                 # Horizontal Pod Autoscalers
 │   ├── monitoring/          # Prometheus, Grafana, ServiceMonitors
 │   ├── gpu-cluster/         # Workers en k3s
@@ -540,22 +558,23 @@ Ciudadano → voxchain-api → RabbitMQ (cola propuestas) → NCT
 NCT valida propuesta → Abre ventana de votación → Publica desafío en RabbitMQ (topic desafio_activo)
 ```
 
-### Paso 3: Fragmentación
+### Paso 3: Minería distribuida
 ```
-Transaction Pool recibe desafío → Divide espacio de nonces en fragmentos → Publica en RabbitMQ (cola tareas_trp)
+Worker standalone: consume desafio_activo [AMQPS/TLS] → mina rango completo [0, NONCE_SPACE) → publica respuesta_nonce
+
+Pool Coordinator: consume desafio_activo [AMQPS/TLS]
+  → fragmenta internamente en tramos de FRAGMENT_SIZE
+  → distribuye a Pool Miners vía HTTP (:9001)
+  → auto-mina un fragmento en paralelo
+  → el primero en encontrar el nonce lo publica en respuesta_nonce
 ```
 
-### Paso 4: Minería
-```
-Workers toman fragmentos → Minan usando Pilar 1 (GPU/CPU) → Si encuentran nonce → Publican en RabbitMQ (cola respuesta_nonce)
-```
-
-### Paso 5: Verificación y Sellado
+### Paso 4: Verificación y Sellado
 ```
 NCT recibe nonce → Verifica que es válido → Sella bloque en Redis → Cierra ventana
 ```
 
-### Paso 6: Encadenamiento
+### Paso 5: Encadenamiento
 ```
 Bloque nuevo referencia hash del bloque anterior → Cadena se valida de punta a punta
 ```
@@ -656,7 +675,7 @@ Si un pool tiene mucho poder, puede influir en el consenso.
 
 | Categoría | Tecnología | Propósito |
 |-----------|-----------|-----------|
-| **Lenguajes** | Python | Servicios (NCT, TrP, Workers, API) |
+| **Lenguajes** | Python | Servicios (NCT, Workers, Pool Coordinator, Pool Miner, API) |
 | | CUDA C/C++ | Minería GPU |
 | | JavaScript/TypeScript | Frontend |
 | **Message Broker** | RabbitMQ | Comunicación asíncrona |
@@ -722,7 +741,7 @@ Si un pool tiene mucho poder, puede influir en el consenso.
 
 4. **Pilar 2: Infraestructura Distribuida (15 min)**
    - Arquitectura de microservicios
-   - Rol de cada servicio (NCT, TrP, Workers)
+   - Rol de cada servicio (NCT, Workers standalone, Pool Coordinator)
    - Flujo de mensajes (RabbitMQ)
    - Demo local con docker compose
 
@@ -766,7 +785,7 @@ Para escalar workers independientemente. Las GPUs son caras, y no siempre se nec
 OpenTofu es el fork open-source de Terraform después de cambios de licencia. Es funcionalmente idéntico pero más libre.
 
 ### ¿Qué pasa si el NCT falla?
-Hay un NCT standby que monitorea heartbeats. Si el líder falla, se dispara una elección (algoritmo Bully) y el standby asume.
+Hay un NCT standby que monitorea el topic `nct.heartbeat`. Si el líder deja de emitir heartbeats por más de `HEARTBEAT_TIMEOUT` (≈12 s), el monitor del standby intenta adquirir el **lease Redis** `nct:leader` directamente (`elect_acquire_leadership`). Si el TTL del lease es ≤ `dead_threshold` (6 s), el standby lo adquiere y se promueve a líder. No hay elección por mensajes ni algoritmo Bully: el árbitro es Redis, no una ronda de mensajes.
 
 ### ¿Cómo se previene que alguien proponga la misma ley dos veces?
 Por `text_hash`. Si el hash ya existe, se aplica un cooldown mayor. Es una forma de detectar reproposición.
@@ -791,7 +810,7 @@ Para evitar depender de MinIO en el camino crítico. MinIO queda como opción pa
 VoxChain es un sistema de blockchain distribuida para gobierno por consenso computacional. Está organizado en 3 pilares:
 
 1. **Pilar 1**: Motor de minería CPU/GPU CUDA para resolver Proof of Work
-2. **Pilar 2**: Infraestructura distribuida con RabbitMQ, Redis, NCT, TrP, Workers, API y Frontend
-3. **Pilar 3**: Despliegue en nube con GKE, k3s, Terraform, CI/CD y monitoreo
+2. **Pilar 2**: Infraestructura distribuida con RabbitMQ, Redis, NCT (primary + standby), Workers standalone, Pool Coordinator + Pool Miners, API y Frontend
+3. **Pilar 3**: Despliegue en nube con GKE + k3s, OpenTofu/Terraform, CI/CD y monitoreo
 
 El sistema permite que cualquier persona proponga leyes, y el consenso se logra mediante esfuerzo computacional (PoW) en lugar de votos nominales. Es una aplicación práctica de conceptos de sistemas distribuidos, computación paralela, DevOps y cloud computing.
