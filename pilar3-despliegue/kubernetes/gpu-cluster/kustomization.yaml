@@ -10,8 +10,3 @@ resources:
   - redis-credentials-secret.yaml
   - worker-deployment.yaml
   - worker-hpa.yaml
-
-  - pool-coordinator-deployment.yaml
-  - pool-coordinator-service.yaml
-  - pool-miner-deployment.yaml
-  - pool-miner-hpa.yaml

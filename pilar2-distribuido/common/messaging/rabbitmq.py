@@ -26,6 +26,7 @@ from .base import (
     EXCHANGE_HEARTBEAT,
     HEARTBEAT_ROUTING_KEY,
     HEARTBEAT_BINDING_KEY,
+    EXCHANGE_POOL_ELECTION,
 )
 
 log = logging.getLogger("voxchain.messaging")
@@ -77,6 +78,8 @@ class RabbitMQMessaging(Messaging):
                             durable=True)
         ch.exchange_declare(exchange=EXCHANGE_HEARTBEAT, exchange_type="topic",
                             durable=True)
+        ch.exchange_declare(exchange=EXCHANGE_POOL_ELECTION, exchange_type="topic",
+                            durable=True)
         ch.basic_qos(prefetch_count=1)
 
     def is_healthy(self) -> bool:
@@ -102,6 +105,8 @@ class RabbitMQMessaging(Messaging):
     def publish_keepalive(self, keepalive): self._publish("", QUEUE_KEEPALIVE, keepalive)
     def publish_heartbeat(self, hb):
         self._publish(EXCHANGE_HEARTBEAT, HEARTBEAT_ROUTING_KEY, hb)
+    def publish_pool_election(self, pool_id: str, msg: dict):
+        self._publish(EXCHANGE_POOL_ELECTION, f"{pool_id}.{msg.get('type', 'unknown')}", msg)
 
     # -- suscripción --------------------------------------------------------
     # Registrar un handler también arranca el consumidor si ya estamos en el
@@ -113,6 +118,16 @@ class RabbitMQMessaging(Messaging):
     def on_keepalive(self, handler): self._subscribe(QUEUE_KEEPALIVE, handler)
     def on_challenge(self, handler): self._subscribe(EXCHANGE_DESAFIO, handler)
     def on_heartbeat(self, handler): self._subscribe(EXCHANGE_HEARTBEAT, handler)
+    def on_pool_election(self, pool_id: str, handler: Callable[[dict], None]) -> None:
+        stream = f"{EXCHANGE_POOL_ELECTION}.{pool_id}"
+        self._handlers[stream] = handler
+        if self._consuming:
+            self._start_pool_election_consumer(stream, pool_id)
+
+    def unsubscribe_pool_election(self) -> None:
+        for stream in list(self._handlers):
+            if stream.startswith(EXCHANGE_POOL_ELECTION):
+                self.unsubscribe(stream)
 
     def _subscribe(self, stream: str, handler: Callable[[dict], None]) -> None:
         self._handlers[stream] = handler
@@ -137,9 +152,23 @@ class RabbitMQMessaging(Messaging):
         """Streams con consumidor activo (lo que realmente se está consumiendo)."""
         return set(self._consumer_tags)
 
+    def _start_pool_election_consumer(self, stream: str, pool_id: str) -> None:
+        if stream in self._consumer_tags:
+            return
+        handler = self._handlers.get(stream)
+        if handler is None:
+            return
+        result = self._ch.queue_declare(queue="", exclusive=True)
+        qname = result.method.queue
+        self._ch.queue_bind(exchange=EXCHANGE_POOL_ELECTION, queue=qname,
+                            routing_key=f"{pool_id}.#")
+        tag = self._ch.basic_consume(queue=qname,
+                                     on_message_callback=self._wrap(handler))
+        self._consumer_tags[stream] = tag
+
     def _start_consumer(self, stream: str) -> None:
         if stream in self._consumer_tags:
-            return  # ya consumiendo este stream
+            return
         handler = self._handlers.get(stream)
         if handler is None:
             return
@@ -158,7 +187,11 @@ class RabbitMQMessaging(Messaging):
 
     def _bind_consumers(self) -> None:
         for stream in list(self._handlers):
-            self._start_consumer(stream)
+            if stream.startswith(EXCHANGE_POOL_ELECTION):
+                pool_id = stream.split(".", 2)[-1]
+                self._start_pool_election_consumer(stream, pool_id)
+            else:
+                self._start_consumer(stream)
 
     def _wrap(self, handler: Callable[[dict], None]):
         def _cb(ch, method, properties, body):

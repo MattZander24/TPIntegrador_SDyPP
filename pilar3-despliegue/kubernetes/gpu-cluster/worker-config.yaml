@@ -4,4 +4,4 @@ metadata:
   name: worker-config
   namespace: g-git-push-cv
 data:
-  rabbitmq-host: ""  # Se llena en CI/CD: IP o DNS del LoadBalancer de RabbitMQ en GCP
+  rabbitmq-host: "35.198.33.80"  # IP del LoadBalancer de RabbitMQ en GCP

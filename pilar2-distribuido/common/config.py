@@ -27,7 +27,11 @@ def get_bool(name: str, default: bool) -> bool:
 
 # Infraestructura
 RABBITMQ_URL = get("RABBITMQ_URL", "amqp://guest:guest@rabbitmq:5672/")
-REDIS_URL = get("REDIS_URL", "redis://redis:6379/0")
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD")
+if REDIS_PASSWORD:
+    REDIS_URL = get("REDIS_URL", f"redis://:{REDIS_PASSWORD}@redis:6379/0")
+else:
+    REDIS_URL = get("REDIS_URL", "redis://redis:6379/0")
 
 # Gobierno (AGENT.md 3): n es parámetro de config; NUNCA ajuste dinámico por carga.
 # n = ceros para promulgar; derogar exige n+1 (lo calcula el dominio).

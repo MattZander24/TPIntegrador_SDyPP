@@ -4,6 +4,8 @@ Modos:
   - ``standalone``: se suscribe al desafío activo del NCT, mina espacio completo.
   - ``pool-coordinator``: fragmenta espacio de nonces, acepta workers HTTP, auto-mina.
   - ``pool-worker``: se conecta a un Pool Coordinator vía HTTP.
+  - ``pool-auto``: modo pool con bully election. Compite con otros workers vía
+    RabbitMQ; el ganador actúa como coordinator, los demás como miners.
 
 Hot-switch entre modos vía POST /switch-mode en puerto admin (9090).
 """
@@ -27,6 +29,7 @@ from worker_pkg.miner import _gpu_available, run_miner
 from worker_pkg.pool_worker import PoolWorker
 from worker_pkg.pool_coordinator import PoolCoordinator
 from worker_pkg.standalone_worker import StandaloneWorker
+from worker_pkg.bully import PoolBully
 
 log = logging.getLogger("voxchain.worker")
 
@@ -46,23 +49,25 @@ class WorkerManager:
         self._pool_httpd = None
         self._stop_event = threading.Event()
         self._pool_http_port = int(os.getenv("POOL_HTTP_PORT", "9001"))
+        self._bully = None
 
     # -- API pública para admin_server --
 
     def get_status(self) -> dict:
-        # For pool-coordinator, show its own listening URL
         pool_url = self._pool_url
         if self._mode == "pool-coordinator":
             pool_url = f"http://{self.worker_id}:{self._pool_http_port}"
+        bully_state = self._bully.state if self._bully else None
         return {
             "mode": self._mode,
             "worker_id": self.worker_id,
             "pool_url": pool_url,
+            "bully_state": bully_state,
             "running": self._thread is not None and self._thread.is_alive(),
         }
 
     def switch_mode(self, target: str, pool_url: str = "") -> dict:
-        if target not in ("pool-worker", "standalone", "pool-coordinator"):
+        if target not in ("pool-worker", "standalone", "pool-coordinator", "pool-auto"):
             raise ValueError(f"modo desconocido: {target}")
         if target == "pool-worker" and not pool_url:
             raise ValueError("pool_url requerido para modo pool-worker")
@@ -74,6 +79,8 @@ class WorkerManager:
             self._start_standalone()
         elif target == "pool-coordinator":
             self._start_pool_coordinator()
+        elif target == "pool-auto":
+            self._start_pool_auto()
         log.info("modo activo: %s", self._mode)
         return {"ok": True, "mode": self._mode, "pool_url": self._pool_url}
 
@@ -178,6 +185,33 @@ class WorkerManager:
         log.info("pool-coordinator %s iniciado en puerto %d",
                  self.worker_id, config.get_int("POOL_HTTP_PORT", 9001))
 
+    def _start_pool_auto(self) -> None:
+        self._mode = "pool-auto"
+        m = self._ensure_messaging()
+        pool_id = os.getenv("POOL_ID", "default")
+        address = os.getenv("WORKER_ADDRESS",
+                            f"http://{socket.gethostname()}:{self._pool_http_port}")
+
+        bully = PoolBully(
+            self.worker_id,
+            pool_id,
+            m,
+            has_gpu=self.has_gpu,
+            capacity=config.get_int("WORKER_CAPACITY", 1),
+            address=address,
+            signer=self.signer,
+        )
+        bully.wire()
+        self._bully = bully
+
+        self._thread = threading.Thread(
+            target=self._run_messaging_loop, args=(bully.tick,), daemon=True
+        )
+        self._thread.start()
+
+        log.info("pool-auto %s iniciado (pool=%s, address=%s)",
+                 self.worker_id, pool_id, address)
+
 
 def main() -> None:
     signal.signal(signal.SIGTERM, lambda *_: None)
@@ -189,6 +223,9 @@ def main() -> None:
     log.info("iniciando %s modo=%s (gpu=%s)", worker_id, mode, has_gpu)
 
     signer = WorkerSigner.from_env()
+    if mode == "pool-auto":
+        pool_url = os.getenv("POOL_COORDINATOR_URL",
+                             f"http://{worker_id}:{int(os.getenv('POOL_HTTP_PORT', '9001'))}")
     manager = WorkerManager(worker_id, has_gpu, signer=signer)
     manager.start(mode, pool_url)
 

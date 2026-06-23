@@ -45,7 +45,7 @@ def fragment_range(start: int, end: int, fragment_size: int) -> list[tuple[int, 
 
 
 class PoolCoordinator:
-    def __init__(self, messaging, *, pool_id: str, redis, mine,
+    def __init__(self, messaging, *, pool_id: str, redis=None, mine,
                  capacity: int = 1, clock=time.time,
                  keepalive_interval: float = 5.0,
                  lease_ttl: int = 10, lease_key: str = "pool:leader",
@@ -68,7 +68,7 @@ class PoolCoordinator:
         self._voting_policy = {"decision": "accept"}
         self._last_keepalive = 0.0
         self._last_lease_renew = 0.0
-        self.is_leader = False
+        self.is_leader = (redis is None)  # bully decide, no Redis
         self._miner_counter = 0
         self._running = False
         self._auto_miner_thread: threading.Thread | None = None
@@ -88,6 +88,10 @@ class PoolCoordinator:
         self.m.on_challenge(self.handle_challenge)
 
     def try_acquire_leadership(self) -> bool:
+        if self.redis is None:
+            self.is_leader = True
+            pool_is_leader.set(1)
+            return True
         acquired = self.redis.set(self.lease_key, self.pool_id,
                                   nx=True, ex=self.lease_ttl)
         if acquired:
@@ -97,6 +101,8 @@ class PoolCoordinator:
         return bool(acquired)
 
     def renew_leadership(self) -> bool:
+        if self.redis is None:
+            return True
         pipe = self.redis.pipeline()
         pipe.get(self.lease_key)
         pipe.pttl(self.lease_key)
@@ -321,6 +327,8 @@ class PoolCoordinator:
             self._election_in_progress = False
 
     def _maybe_start_election(self) -> None:
+        if self.redis is None:
+            return
         if self._election_in_progress:
             return
         current_leader = self.redis.get(self.lease_key)
@@ -337,24 +345,25 @@ class PoolCoordinator:
         now = self.now()
         self._purge_stale_miners()
 
-        # Recoger resultado de elección completada
-        if (not self.is_leader
-                and self._election_thread is not None
-                and not self._election_thread.is_alive()):
-            if self._election_result:
-                self.is_leader = True
-                pool_is_leader.set(1)
-                log.info("pool coordinator %s ganó la elección, asumiendo liderazgo",
-                         self.pool_id)
-            self._election_thread = None
+        # Recoger resultado de elección completada (solo si Redis disponible)
+        if self.redis is not None:
+            if (not self.is_leader
+                    and self._election_thread is not None
+                    and not self._election_thread.is_alive()):
+                if self._election_result:
+                    self.is_leader = True
+                    pool_is_leader.set(1)
+                    log.info("pool coordinator %s ganó la elección, asumiendo liderazgo",
+                             self.pool_id)
+                self._election_thread = None
 
-        if now - self._last_lease_renew >= 3.0:
-            self._last_lease_renew = now
-            if self.is_leader:
-                if not self.renew_leadership():
-                    return
-            else:
-                self._maybe_start_election()
+            if now - self._last_lease_renew >= 3.0:
+                self._last_lease_renew = now
+                if self.is_leader:
+                    if not self.renew_leadership():
+                        return
+                else:
+                    self._maybe_start_election()
 
         if not self.is_leader:
             return

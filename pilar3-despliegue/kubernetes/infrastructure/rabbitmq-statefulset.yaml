@@ -14,6 +14,7 @@ spec:
       labels:
         app: rabbitmq
     spec:
+      serviceAccountName: rabbitmq
       terminationGracePeriodSeconds: 60
       containers:
         - name: rabbitmq
@@ -27,7 +28,7 @@ spec:
               name: management
           resources:
             requests:
-              cpu: "500m"
+              cpu: "250m"
               memory: "512Mi"
             limits:
               cpu: "1000m"

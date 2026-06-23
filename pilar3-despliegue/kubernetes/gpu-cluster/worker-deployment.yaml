@@ -4,7 +4,7 @@ metadata:
   name: worker
   namespace: g-git-push-cv
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: worker
@@ -16,19 +16,50 @@ spec:
       terminationGracePeriodSeconds: 10
       containers:
         - name: worker
-          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker:latest
+          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker-gpu:latest
           imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: health
+            - containerPort: 9001
+              name: pool
           resources:
             requests:
-              cpu: "500m"
+              cpu: "100m"
               memory: "256Mi"
             limits:
+              cpu: "500m"
               memory: "512Mi"
           env:
+            - name: MY_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: username
+            - name: RABBITMQ_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: password
+            - name: RABBITMQ_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: worker-config
+                  key: rabbitmq-host
             - name: RABBITMQ_URL
-              value: "amqp://guest:guest@rabbitmq.voxchain.svc.cluster.local:5672/"
+              value: "amqp://$(RABBITMQ_USER):$(RABBITMQ_PASS)@$(RABBITMQ_HOST):5672/"
             - name: REDIS_URL
               value: ""
+            - name: WORKER_MODE
+              value: "pool-auto"
+            - name: POOL_ID
+              value: "default"
+            - name: WORKER_ADDRESS
+              value: "http://$(MY_POD_IP):9001"
             - name: WORKER_CAPACITY
               value: "1"
             - name: LOG_DIR

@@ -16,8 +16,7 @@ spec:
       terminationGracePeriodSeconds: 10
       containers:
         - name: pool-coordinator
-          # Pool Coordinator ahora es el mismo worker en modo pool-coordinator
-          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker:latest
+          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker-gpu:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
@@ -26,22 +25,34 @@ spec:
               name: http
           resources:
             requests:
-              cpu: "200m"
+              cpu: "100m"
               memory: "256Mi"
             limits:
               cpu: "500m"
               memory: "512Mi"
           env:
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: username
+            - name: RABBITMQ_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: password
+            - name: RABBITMQ_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: worker-config
+                  key: rabbitmq-host
             - name: RABBITMQ_URL
-              value: "amqp://guest:guest@rabbitmq.voxchain.svc.cluster.local:5672/"
+              value: "amqp://$(RABBITMQ_USER):$(RABBITMQ_PASS)@$(RABBITMQ_HOST):5672/"
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: redis-credentials
                   key: password
-            # FQDN cross-namespace + AUTH (A-02): el pool-coordinator usa Redis
-            # para el lease pool:leader. El host era "redis" (no resolvía fuera de
-            # voxchain); ahora apunta al Service real con contraseña.
             - name: REDIS_URL
               value: "redis://:$(REDIS_PASSWORD)@redis.voxchain.svc.cluster.local:6379/0"
             - name: WORKER_MODE

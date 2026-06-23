@@ -43,9 +43,10 @@ spec:
             - /bin/sh
             - -c
             - |
+              MASTER_IP=$(getent hosts redis-0.redis-headless.voxchain.svc.cluster.local | awk '{print $1}'); \
               cat > /tmp/sentinel.conf << EOF
               port 26379
-              sentinel monitor mymaster redis-0.redis.voxchain.svc.cluster.local 6379 2
+              sentinel monitor mymaster $MASTER_IP 6379 2
               sentinel auth-pass mymaster $REDIS_PASSWORD
               sentinel down-after-milliseconds mymaster 5000
               sentinel failover-timeout mymaster 10000

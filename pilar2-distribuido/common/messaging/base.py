@@ -25,6 +25,8 @@ EXCHANGE_HEARTBEAT = "nct.heartbeat"       # NCT activo → backups (topic)
 HEARTBEAT_ROUTING_KEY = "nct.heartbeat.live"
 HEARTBEAT_BINDING_KEY = "nct.heartbeat.#"
 
+EXCHANGE_POOL_ELECTION = "pool.election"   # bully líder pool (topic)
+
 # Topics (exchanges) → fan-out: cada consumidor recibe una copia.
 # El resto son colas de trabajo → consumidores competidores (round-robin),
 # igual que RabbitMQ reparte una cola entre sus consumidores.
@@ -43,6 +45,8 @@ class Messaging:
     def publish_task(self, task: dict) -> None: raise NotImplementedError
     def publish_keepalive(self, keepalive: dict) -> None: raise NotImplementedError
     def publish_heartbeat(self, hb: dict) -> None: raise NotImplementedError
+    def publish_pool_election(self, pool_id: str, msg: dict) -> None:
+        raise NotImplementedError
 
     # -- suscripción (registra callback; se ejecutan al consumir) --
     def on_proposal(self, handler: Handler) -> None: raise NotImplementedError
@@ -51,6 +55,10 @@ class Messaging:
     def on_task(self, handler: Handler) -> None: raise NotImplementedError
     def on_keepalive(self, handler: Handler) -> None: raise NotImplementedError
     def on_heartbeat(self, handler: Handler) -> None: raise NotImplementedError
+    def on_pool_election(self, pool_id: str, handler: Handler) -> None:
+        raise NotImplementedError
+    def unsubscribe_pool_election(self) -> None:
+        raise NotImplementedError
 
     # -- cancelación de consumo (gating por liderazgo, AGENT.md 4) --
     # Un NCT follower NO debe consumir las colas de trabajo (propuestas,
@@ -121,6 +129,8 @@ class InMemoryBus(Messaging):
     def publish_task(self, task): self._dispatch(QUEUE_TAREAS, task)
     def publish_keepalive(self, keepalive): self._dispatch(QUEUE_KEEPALIVE, keepalive)
     def publish_heartbeat(self, hb): self._dispatch(EXCHANGE_HEARTBEAT, hb)
+    def publish_pool_election(self, pool_id, msg):
+        self._dispatch(EXCHANGE_POOL_ELECTION, msg)
 
     # suscripción
     def on_proposal(self, handler): self._register(QUEUE_PROPUESTAS, handler)
@@ -129,6 +139,10 @@ class InMemoryBus(Messaging):
     def on_task(self, handler): self._register(QUEUE_TAREAS, handler)
     def on_keepalive(self, handler): self._register(QUEUE_KEEPALIVE, handler)
     def on_heartbeat(self, handler): self._register(EXCHANGE_HEARTBEAT, handler)
+    def on_pool_election(self, pool_id, handler):
+        self._register(EXCHANGE_POOL_ELECTION, handler)
+    def unsubscribe_pool_election(self):
+        self.unsubscribe(EXCHANGE_POOL_ELECTION)
 
     def start_consuming(self, tick=None, tick_interval: float = 1.0) -> None:
         # En el bus en memoria el consumo es inmediato en publish; no hay loop.
