@@ -336,16 +336,23 @@ Este es **el caso central** del proyecto. Resumen (detalle en §9):
 ### 8.3 Partición de red que aísla al NCT líder (split-brain)
 - **Riesgo:** el primario no murió, pero quedó aislado; un standby cree que cayó
   y se promueve. Por un instante podría haber dos líderes.
-- **Mitigación:** en cada `tick()`, el líder ejecuta `renew_leadership()` (Lua
-  atómico): comprueba que el lease en Redis **sigue siendo suyo**. Si otro NCT lo
-  adquirió, el líder original ejecuta `step_down()`:
+- **Mitigación 1 — lease:** en cada `tick()`, el líder ejecuta
+  `renew_leadership()` (Lua atómico): comprueba que el lease en Redis **sigue
+  siendo suyo**. Si otro NCT lo adquirió, el líder original ejecuta `step_down()`:
   - `is_leader = False`
   - **Cancela los consumidores** de `propuestas` y `respuesta_nonce` (no basta
     con ignorar en memoria: RabbitMQ ya le entregó mensajes en round-robin, hay
     que dejar de consumirlos para no "robárselos" al líder real).
   - Suelta la ventana en curso y reactiva su monitor de heartbeats.
-- **Ventana de solapamiento:** la detección no es instantánea; dura hasta
-  `HEARTBEAT_INTERVAL` (≈3 s). Es una **limitación conocida y aceptada**.
+- **Mitigación 2 — CAS sobre el tip de la cadena (A-04):** durante la ventana de
+  solapamiento (hasta ≈3 s) ambos NCT podrían intentar sellar ventanas distintas
+  con el mismo `previous_hash`, produciendo un fork. `append_block` usa un
+  **script Lua atómico** que verifica `LINDEX chain -1 == previous_hash` antes de
+  hacer `HSET + RPUSH`. Si el tip ya cambió (el otro NCT se adelantó), devuelve
+  `False` y `_seal()` aborta: re-encola la ley y llama `maybe_open_window()` para
+  auto-recuperarse. **La cadena permanece lineal incluso durante el solapamiento.**
+- **Ventana de solapamiento:** la detección del lease no es instantánea (≈3 s);
+  el CAS cubre ese hueco garantizando la integridad de la cadena.
 
 ### 8.4 Se cae Redis
 Redis es la **fuente de verdad** y un **punto único de fallo** del estado.
@@ -529,6 +536,7 @@ gana, que es exactamente la filosofía de toda la red VoxChain.
 | Dos workers resuelven el mismo desafío | `try_seal_window` (SETNX en Redis): el primero gana, el resto se descartan como tardíos. |
 | Dos candidatos ganan la elección casi a la vez | Backoff del PoW (el segundo ve el claim del primero y se retira) + reglas de TTL del lease. |
 | Dos NCT como líder (split-brain) | `renew_leadership` (Lua atómico) → el que pierde el lease hace `step_down`. |
+| Dos NCT sellan ventanas distintas con el mismo `previous_hash` | CAS Lua en `append_block`: `LINDEX chain -1 == previous_hash` antes de `HSET+RPUSH`; el segundo NCT obtiene `False` y aborta. |
 | Dos `primary` arrancan juntos | SETNX: solo uno adquiere; el otro arranca follower. |
 | Un follower roba mensajes de las colas de trabajo | *Gating* por liderazgo: el follower nunca se suscribe a `propuestas`/`respuesta_nonce`. |
 | Reentrega de un mensaje ya procesado | Sets de idempotencia (`_solved` en worker/pool); el NCT re-verifica todo. |
@@ -600,7 +608,7 @@ candidato llega ahí) y el margen temporal corto. Está documentado como tal.
 |---|---|---|---|
 | **NCT líder** | Se detiene el avance de ventanas | Elección Bully por PoW; nuevo líder en ~12-15 s | No (guard en Redis) |
 | **NCT primario reinicia** | Ninguno si hay standby | Arranca como follower | No |
-| **Partición NCT (split-brain)** | Solapamiento ≤3 s | `step_down` por fallo de `renew_leadership` | No |
+| **Partición NCT (split-brain)** | Solapamiento ≤3 s; posible pérdida de ventana | `step_down` por `renew_leadership`; CAS en `append_block` evita fork | No (CAS garantiza cadena lineal) |
 | **Redis** | Sistema se detiene (seguro) | StatefulSet + PVC; readquiere lease al volver | No (idempotencia) |
 | **RabbitMQ** | Mensajería en pausa | Reconexión con reintentos; colas durables | No |
 | **Transaction Pool** | Ventana puede vencer | Réplicas + HPA; stateless | No |
@@ -622,8 +630,11 @@ no son descuidos.
 1. **Pérdida de la ventana en curso al caer el NCT.** El cómputo invertido en la
    ventana activa se descarta; el nuevo líder arranca con una ventana nueva.
    Mitigarlo (persistir y reanudar la ventana) se decidió fuera de alcance.
-2. **Ventana de split-brain de hasta `HEARTBEAT_INTERVAL` (≈3 s).** Detectada por
-   `renew_leadership`, pero no instantánea.
+2. **Ventana de solapamiento en split-brain de hasta `HEARTBEAT_INTERVAL` (≈3 s).**
+   Durante ese hueco pueden existir dos líderes. El lease (`renew_leadership`) los
+   detecta y hace `step_down`, pero no es instantáneo. La integridad de la cadena
+   está protegida por el CAS de `append_block` (A-04); la ley en la ventana del
+   NCT que pierde se re-encola y se procesa normalmente.
 3. **Sybil sin mitigar.** El sistema es pseudo-anónimo por diseño.
 4. **Concentración de poder.** Igual que las blockchains reales de PoW, favorece
    estructuralmente a los pools grandes. Es una observación política
