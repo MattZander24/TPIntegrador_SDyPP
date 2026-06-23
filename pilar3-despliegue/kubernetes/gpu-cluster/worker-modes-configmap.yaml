@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: worker-modes
+  namespace: g-git-push-cv
+data: {}
+  # worker-worker-xyz: standalone
+  # worker-worker-abc: pool-auto

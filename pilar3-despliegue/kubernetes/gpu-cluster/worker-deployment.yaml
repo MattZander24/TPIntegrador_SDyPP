@@ -13,6 +13,7 @@ spec:
       labels:
         app: worker
     spec:
+      serviceAccountName: worker
       terminationGracePeriodSeconds: 10
       containers:
         - name: worker

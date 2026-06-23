@@ -5,3 +5,6 @@ metadata:
   namespace: g-git-push-cv
 data:
   rabbitmq-host: "35.198.33.80"  # IP del LoadBalancer de RabbitMQ en GCP
+  # URL de Redis en GKE para que los workers reporten su estado al backend
+  # Se completa durante el despliegue con la IP del servicio redis en GKE
+  redis-host: ""  # Se sobreescribe en el despliegue: kubectl create configmap worker-config ... --from-literal=redis-host=<IP>

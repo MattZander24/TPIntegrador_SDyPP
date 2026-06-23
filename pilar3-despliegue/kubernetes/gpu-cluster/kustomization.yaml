@@ -9,4 +9,7 @@ resources:
   - rabbitmq-credentials-secret.yaml
   - redis-credentials-secret.yaml
   - worker-deployment.yaml
-  - worker-hpa.yaml
+  - worker-modes-configmap.yaml
+  - worker-rbac.yaml
+  - backend-proxy-rbac.yaml
+  - demo-deployments.yaml

@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: worker
+  namespace: g-git-push-cv
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: worker-role
+  namespace: g-git-push-cv
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    resourceNames: ["worker-modes"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: worker-binding
+  namespace: g-git-push-cv
+subjects:
+  - kind: ServiceAccount
+    name: worker
+    namespace: g-git-push-cv
+roleRef:
+  kind: Role
+  name: worker-role
+  apiGroup: rbac.authorization.k8s.io

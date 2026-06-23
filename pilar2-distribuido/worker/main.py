@@ -50,6 +50,7 @@ class WorkerManager:
         self._stop_event = threading.Event()
         self._pool_http_port = int(os.getenv("POOL_HTTP_PORT", "9001"))
         self._bully = None
+        self._report_thread = None
 
     # -- API pública para admin_server --
 
@@ -84,14 +85,73 @@ class WorkerManager:
         log.info("modo activo: %s", self._mode)
         return {"ok": True, "mode": self._mode, "pool_url": self._pool_url}
 
+    def _redis_report_loop(self) -> None:
+        redis_client = None
+        try:
+            from common.redis import create_redis
+            redis_client = create_redis(config.REDIS_URL)
+        except Exception:
+            log.warning("No se pudo inicializar cliente de Redis para reporte de estado")
+
+        while not self._stop_event.is_set():
+            if redis_client:
+                try:
+                    status = self.get_status()
+                    import json
+                    redis_client.set(f"worker:status:{self.worker_id}", json.dumps(status), ex=15)
+                except Exception:
+                    log.debug("No se pudo escribir estado en Redis", exc_info=True)
+            self._stop_event.wait(5.0)
+
     def start(self, mode: str, pool_url: str = "") -> None:
         self.switch_mode(mode, pool_url)
+        if self._report_thread is None:
+            self._report_thread = threading.Thread(target=self._redis_report_loop, daemon=True)
+            self._report_thread.start()
 
     def stop(self) -> None:
         self._stop_event.set()
         self._stop_current()
+        if self._report_thread:
+            self._report_thread.join(timeout=5)
+            self._report_thread = None
 
     # -- interno --
+
+    # -- ConfigMap worker-modes (persistencia de modo entre reinicios) --
+
+    @staticmethod
+    def _read_mode_from_configmap(worker_id: str) -> str | None:
+        try:
+            from kubernetes import config, client
+            try:
+                config.load_incluster_config()
+            except config.ConfigException:
+                return None
+            v1 = client.CoreV1Api()
+            ns = open("/var/run/secrets/kubernetes.io/serviceaccount/namespace").read().strip()
+            cm = v1.read_namespaced_config_map("worker-modes", ns)
+            return cm.data.get(worker_id)
+        except Exception:
+            log.debug("no se pudo leer worker-modes ConfigMap", exc_info=True)
+            return None
+
+    # -- comandos remotos (RabbitMQ worker.command) --
+
+    def _subscribe_worker_commands(self, messaging) -> None:
+        messaging.on_worker_command(self.worker_id, self._handle_command)
+
+    def _handle_command(self, msg: dict) -> None:
+        cmd = msg.get("type", "")
+        if cmd == "switch_mode":
+            target = msg.get("mode", "")
+            if target in ("standalone", "pool-worker", "pool-auto", "pool-coordinator"):
+                log.info("comando remoto: switch_mode → %s", target)
+                pool_url = msg.get("pool_url", "")
+                self.switch_mode(target, pool_url)
+        elif cmd == "stop":
+            log.info("comando remoto: stop")
+            self.stop()
 
     def _stop_current(self) -> None:
         if self._worker:
@@ -125,6 +185,8 @@ class WorkerManager:
     def _start_pool_worker(self, pool_url: str) -> None:
         self._mode = "pool-worker"
         self._pool_url = pool_url
+        m = self._ensure_messaging()
+        self._subscribe_worker_commands(m)
         pw = PoolWorker(
             pool_url,
             miner_id=self.worker_id,
@@ -139,6 +201,7 @@ class WorkerManager:
     def _start_standalone(self) -> None:
         self._mode = "standalone"
         m = self._ensure_messaging()
+        self._subscribe_worker_commands(m)
         sw = StandaloneWorker(
             m,
             worker_id=self.worker_id,
@@ -155,6 +218,7 @@ class WorkerManager:
     def _start_pool_coordinator(self) -> None:
         self._mode = "pool-coordinator"
         m = self._ensure_messaging()
+        self._subscribe_worker_commands(m)
         redis = create_redis(config.REDIS_URL)
         pc = PoolCoordinator(
             m,
@@ -188,6 +252,7 @@ class WorkerManager:
     def _start_pool_auto(self) -> None:
         self._mode = "pool-auto"
         m = self._ensure_messaging()
+        self._subscribe_worker_commands(m)
         pool_id = os.getenv("POOL_ID", "default")
         address = os.getenv("WORKER_ADDRESS",
                             f"http://{socket.gethostname()}:{self._pool_http_port}")
@@ -218,7 +283,9 @@ def main() -> None:
     setup_logging("worker")
     worker_id = os.getenv("WORKER_ID", f"worker-{socket.gethostname()}")
     has_gpu = _gpu_available(os.getenv("MINER_GPU_BIN", ""))
-    mode = os.getenv("WORKER_MODE", "standalone")
+
+    # Leer modo desde ConfigMap (persistencia), fallback a env var
+    mode = WorkerManager._read_mode_from_configmap(worker_id) or os.getenv("WORKER_MODE", "standalone")
     pool_url = os.getenv("POOL_COORDINATOR_URL", "")
     log.info("iniciando %s modo=%s (gpu=%s)", worker_id, mode, has_gpu)
 

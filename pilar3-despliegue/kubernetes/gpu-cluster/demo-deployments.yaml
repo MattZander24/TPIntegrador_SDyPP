@@ -1,0 +1,462 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# demo-deployments.yaml — Escenario demo: 5 nodos precargados en k3s-cluster
+#
+# Grafo de conexión:
+#   valentin    → worker-standalone     (standalone, autónomo)
+#   gustavo     → worker-pool-coordinator (pool-coordinator, líder del pool)
+#   matt        → worker-pool-miner-1   (pool-worker bajo gustavo)
+#   profesor1   → worker-pool-miner-2   (pool-worker bajo gustavo)
+#   profesor2   → worker-pool-miner-3   (pool-worker bajo gustavo)
+#
+# Todos los workers reportan su estado periódicamente a Redis (en GKE) mediante
+# la clave worker:status:<worker_id> (TTL 15 s). El backend voxchain-api lee
+# esas claves para servir el estado al frontend sin necesidad de acceso directo
+# al cluster k3s.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── 1. STANDALONE — usuario: valentin ────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-standalone
+  namespace: g-git-push-cv
+  labels:
+    demo-user: valentin
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker-standalone
+  template:
+    metadata:
+      labels:
+        app: worker-standalone
+    spec:
+      serviceAccountName: worker
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: worker
+          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker-gpu:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: health
+            - containerPort: 9090
+              name: admin
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          env:
+            - name: WORKER_ID
+              value: "worker-standalone"
+            - name: WORKER_MODE
+              value: "standalone"
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: username
+            - name: RABBITMQ_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: password
+            - name: RABBITMQ_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: worker-config
+                  key: rabbitmq-host
+            - name: RABBITMQ_URL
+              value: "amqp://$(RABBITMQ_USER):$(RABBITMQ_PASS)@$(RABBITMQ_HOST):5672/"
+            - name: REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: worker-config
+                  key: redis-host
+            - name: REDIS_URL
+              value: "redis://$(REDIS_HOST):6379/0"
+            - name: WORKER_CAPACITY
+              value: "1"
+            - name: LOG_DIR
+              value: /var/log/voxchain
+            - name: MINER_CPU_SCRIPT
+              value: /app/pilar1-minero/cpu/src/brute_force.py
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+# ── 2. POOL COORDINATOR — usuario: gustavo ───────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-pool-coordinator
+  namespace: g-git-push-cv
+  labels:
+    demo-user: gustavo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker-pool-coordinator
+  template:
+    metadata:
+      labels:
+        app: worker-pool-coordinator
+    spec:
+      serviceAccountName: worker
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: worker
+          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker-gpu:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: health
+            - containerPort: 9001
+              name: pool
+            - containerPort: 9090
+              name: admin
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          env:
+            - name: WORKER_ID
+              value: "worker-pool-coordinator"
+            - name: WORKER_MODE
+              value: "pool-coordinator"
+            - name: POOL_HTTP_PORT
+              value: "9001"
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: username
+            - name: RABBITMQ_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: password
+            - name: RABBITMQ_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: worker-config
+                  key: rabbitmq-host
+            - name: RABBITMQ_URL
+              value: "amqp://$(RABBITMQ_USER):$(RABBITMQ_PASS)@$(RABBITMQ_HOST):5672/"
+            - name: REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: worker-config
+                  key: redis-host
+            - name: REDIS_URL
+              value: "redis://$(REDIS_HOST):6379/0"
+            - name: WORKER_CAPACITY
+              value: "1"
+            - name: LOG_DIR
+              value: /var/log/voxchain
+            - name: MINER_CPU_SCRIPT
+              value: /app/pilar1-minero/cpu/src/brute_force.py
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+# Service para que los pool-miners encuentren al coordinator dentro del namespace
+apiVersion: v1
+kind: Service
+metadata:
+  name: worker-pool-coordinator
+  namespace: g-git-push-cv
+spec:
+  selector:
+    app: worker-pool-coordinator
+  ports:
+    - name: pool
+      port: 9001
+      targetPort: 9001
+    - name: admin
+      port: 9090
+      targetPort: 9090
+---
+# ── 3. POOL MINER 1 — usuario: matt ──────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-pool-miner-1
+  namespace: g-git-push-cv
+  labels:
+    demo-user: matt
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker-pool-miner-1
+  template:
+    metadata:
+      labels:
+        app: worker-pool-miner-1
+    spec:
+      serviceAccountName: worker
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: worker
+          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker-gpu:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: health
+            - containerPort: 9090
+              name: admin
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          env:
+            - name: WORKER_ID
+              value: "worker-pool-miner-1"
+            - name: WORKER_MODE
+              value: "pool-worker"
+            - name: POOL_COORDINATOR_URL
+              value: "http://worker-pool-coordinator:9001"
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: username
+            - name: RABBITMQ_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: password
+            - name: RABBITMQ_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: worker-config
+                  key: rabbitmq-host
+            - name: RABBITMQ_URL
+              value: "amqp://$(RABBITMQ_USER):$(RABBITMQ_PASS)@$(RABBITMQ_HOST):5672/"
+            - name: REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: worker-config
+                  key: redis-host
+            - name: REDIS_URL
+              value: "redis://$(REDIS_HOST):6379/0"
+            - name: WORKER_CAPACITY
+              value: "1"
+            - name: LOG_DIR
+              value: /var/log/voxchain
+            - name: MINER_CPU_SCRIPT
+              value: /app/pilar1-minero/cpu/src/brute_force.py
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+# ── 4. POOL MINER 2 — usuario: profesor1 ─────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-pool-miner-2
+  namespace: g-git-push-cv
+  labels:
+    demo-user: profesor1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker-pool-miner-2
+  template:
+    metadata:
+      labels:
+        app: worker-pool-miner-2
+    spec:
+      serviceAccountName: worker
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: worker
+          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker-gpu:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: health
+            - containerPort: 9090
+              name: admin
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          env:
+            - name: WORKER_ID
+              value: "worker-pool-miner-2"
+            - name: WORKER_MODE
+              value: "pool-worker"
+            - name: POOL_COORDINATOR_URL
+              value: "http://worker-pool-coordinator:9001"
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: username
+            - name: RABBITMQ_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: password
+            - name: RABBITMQ_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: worker-config
+                  key: rabbitmq-host
+            - name: RABBITMQ_URL
+              value: "amqp://$(RABBITMQ_USER):$(RABBITMQ_PASS)@$(RABBITMQ_HOST):5672/"
+            - name: REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: worker-config
+                  key: redis-host
+            - name: REDIS_URL
+              value: "redis://$(REDIS_HOST):6379/0"
+            - name: WORKER_CAPACITY
+              value: "1"
+            - name: LOG_DIR
+              value: /var/log/voxchain
+            - name: MINER_CPU_SCRIPT
+              value: /app/pilar1-minero/cpu/src/brute_force.py
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+# ── 5. POOL MINER 3 — usuario: profesor2 ─────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-pool-miner-3
+  namespace: g-git-push-cv
+  labels:
+    demo-user: profesor2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker-pool-miner-3
+  template:
+    metadata:
+      labels:
+        app: worker-pool-miner-3
+    spec:
+      serviceAccountName: worker
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: worker
+          image: southamerica-east1-docker.pkg.dev/voxchain/voxchain-images/worker-gpu:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: health
+            - containerPort: 9090
+              name: admin
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          env:
+            - name: WORKER_ID
+              value: "worker-pool-miner-3"
+            - name: WORKER_MODE
+              value: "pool-worker"
+            - name: POOL_COORDINATOR_URL
+              value: "http://worker-pool-coordinator:9001"
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: username
+            - name: RABBITMQ_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-credentials
+                  key: password
+            - name: RABBITMQ_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: worker-config
+                  key: rabbitmq-host
+            - name: RABBITMQ_URL
+              value: "amqp://$(RABBITMQ_USER):$(RABBITMQ_PASS)@$(RABBITMQ_HOST):5672/"
+            - name: REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: worker-config
+                  key: redis-host
+            - name: REDIS_URL
+              value: "redis://$(REDIS_HOST):6379/0"
+            - name: WORKER_CAPACITY
+              value: "1"
+            - name: LOG_DIR
+              value: /var/log/voxchain
+            - name: MINER_CPU_SCRIPT
+              value: /app/pilar1-minero/cpu/src/brute_force.py
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10

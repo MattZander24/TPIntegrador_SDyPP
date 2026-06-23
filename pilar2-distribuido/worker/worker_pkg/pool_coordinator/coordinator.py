@@ -296,6 +296,18 @@ class PoolCoordinator:
         })
         log.debug("pool %s keepalive: %d miners, capacity %d, gpu=%s",
                   self.pool_id, len(fresh), total_capacity, has_gpu)
+        if self.redis is not None:
+            try:
+                import json
+                health = {
+                    "pool": "ok",
+                    "rabbitmq": "ok",
+                    "miners": len(fresh),
+                    "voting_policy": self._voting_policy,
+                }
+                self.redis.set(f"pool:health:{self.pool_id}", json.dumps(health), ex=15)
+            except Exception:
+                pass
 
     def start(self) -> None:
         self._running = True
@@ -347,6 +359,19 @@ class PoolCoordinator:
 
         # Recoger resultado de elección completada (solo si Redis disponible)
         if self.redis is not None:
+            # Sincronizar política de voto desde Redis
+            if self.is_leader:
+                try:
+                    policy_data = self.redis.get(f"pool:policy:{self.pool_id}")
+                    if policy_data:
+                        import json
+                        policy = json.loads(policy_data)
+                        if policy != self._voting_policy:
+                            self._voting_policy = policy
+                            log.info("pool %s cargó política de voto actualizada desde Redis: %s", self.pool_id, policy)
+                except Exception:
+                    pass
+
             if (not self.is_leader
                     and self._election_thread is not None
                     and not self._election_thread.is_alive()):

@@ -26,6 +26,7 @@ HEARTBEAT_ROUTING_KEY = "nct.heartbeat.live"
 HEARTBEAT_BINDING_KEY = "nct.heartbeat.#"
 
 EXCHANGE_POOL_ELECTION = "pool.election"   # bully líder pool (topic)
+EXCHANGE_WORKER_COMMAND = "worker.command" # backend → worker (topic)
 
 # Topics (exchanges) → fan-out: cada consumidor recibe una copia.
 # El resto son colas de trabajo → consumidores competidores (round-robin),
@@ -47,6 +48,8 @@ class Messaging:
     def publish_heartbeat(self, hb: dict) -> None: raise NotImplementedError
     def publish_pool_election(self, pool_id: str, msg: dict) -> None:
         raise NotImplementedError
+    def publish_worker_command(self, worker_id: str, command: dict) -> None:
+        raise NotImplementedError
 
     # -- suscripción (registra callback; se ejecutan al consumir) --
     def on_proposal(self, handler: Handler) -> None: raise NotImplementedError
@@ -56,6 +59,8 @@ class Messaging:
     def on_keepalive(self, handler: Handler) -> None: raise NotImplementedError
     def on_heartbeat(self, handler: Handler) -> None: raise NotImplementedError
     def on_pool_election(self, pool_id: str, handler: Handler) -> None:
+        raise NotImplementedError
+    def on_worker_command(self, worker_id: str, handler: Handler) -> None:
         raise NotImplementedError
     def unsubscribe_pool_election(self) -> None:
         raise NotImplementedError
@@ -131,6 +136,8 @@ class InMemoryBus(Messaging):
     def publish_heartbeat(self, hb): self._dispatch(EXCHANGE_HEARTBEAT, hb)
     def publish_pool_election(self, pool_id, msg):
         self._dispatch(EXCHANGE_POOL_ELECTION, msg)
+    def publish_worker_command(self, worker_id, command):
+        self._dispatch(EXCHANGE_WORKER_COMMAND, command)
 
     # suscripción
     def on_proposal(self, handler): self._register(QUEUE_PROPUESTAS, handler)
@@ -141,6 +148,8 @@ class InMemoryBus(Messaging):
     def on_heartbeat(self, handler): self._register(EXCHANGE_HEARTBEAT, handler)
     def on_pool_election(self, pool_id, handler):
         self._register(EXCHANGE_POOL_ELECTION, handler)
+    def on_worker_command(self, worker_id, handler):
+        self._register(EXCHANGE_WORKER_COMMAND, handler)
     def unsubscribe_pool_election(self):
         self.unsubscribe(EXCHANGE_POOL_ELECTION)
 

@@ -189,7 +189,7 @@ deploy_k3s() {
     info "Aplicando namespace..."
     kubectl apply -f pilar3-despliegue/kubernetes/gpu-cluster/namespace.yaml
 
-    info "Configurando host de RabbitMQ desde GKE..."
+    info "Configurando hosts de RabbitMQ y Redis desde GKE..."
     kubectl config use-context "$GKE_CTX" >/dev/null
     RABBITMQ_HOST=$(kubectl get svc -n "$NAMESPACE_GKE" rabbitmq-external \
         -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
@@ -197,13 +197,26 @@ deploy_k3s() {
         warn "No se pudo obtener IP de RabbitMQ, usando placeholder"
         RABBITMQ_HOST="placeholder.voxchain.local"
     fi
+    # Obtener IP del servicio Redis en GKE para que los workers k3s reporten su estado
+    REDIS_HOST=$(kubectl get svc -n "$NAMESPACE_GKE" redis \
+        -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
+    if [[ -z "$REDIS_HOST" ]]; then
+        # Intentar con el LoadBalancer si existe
+        REDIS_HOST=$(kubectl get svc -n "$NAMESPACE_GKE" redis \
+            -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+    fi
+    if [[ -z "$REDIS_HOST" ]]; then
+        warn "No se pudo obtener IP de Redis GKE, workers k3s no reportarán estado"
+        REDIS_HOST=""
+    fi
     kubectl config use-context "$K3S_CTX" >/dev/null
 
     kubectl create configmap worker-config \
         --namespace "$NAMESPACE_K3S" \
         --from-literal=rabbitmq-host="$RABBITMQ_HOST" \
+        --from-literal=redis-host="$REDIS_HOST" \
         --dry-run=client -o yaml | kubectl apply -f -
-    ok "worker-config creado (RABBITMQ_HOST=$RABBITMQ_HOST)"
+    ok "worker-config creado (RABBITMQ_HOST=$RABBITMQ_HOST, REDIS_HOST=${REDIS_HOST:-vacío})"
 
     echo "---"
     info "Aplicando secrets desde Secret Manager..."
@@ -221,17 +234,18 @@ deploy_k3s() {
     ok "Secrets creados desde Secret Manager"
 
     echo "---"
-    info "Aplicando manifiestos de GPU cluster..."
-    for f in worker-deployment worker-hpa \
-             pool-coordinator-deployment pool-coordinator-service \
-             pool-miner-deployment pool-miner-hpa; do
-        kubectl apply -f "pilar3-despliegue/kubernetes/gpu-cluster/${f}.yaml"
-    done
-    ok "Manifiestos GPU cluster aplicados"
+    info "Aplicando manifiestos de GPU cluster (demo: 5 nodos)..."
+    # Nodos demo individuales (escenario con usuarios precargados)
+    kubectl apply -f pilar3-despliegue/kubernetes/gpu-cluster/demo-deployments.yaml
+    # RBAC y manifiestos auxiliares
+    kubectl apply -f pilar3-despliegue/kubernetes/gpu-cluster/worker-rbac.yaml
+    kubectl apply -f pilar3-despliegue/kubernetes/gpu-cluster/backend-proxy-rbac.yaml
+    kubectl apply -f pilar3-despliegue/kubernetes/gpu-cluster/worker-modes-configmap.yaml
+    ok "Manifiestos GPU cluster (demo) aplicados"
 
     echo "---"
     info "Verificando rollouts..."
-    for deploy in worker pool-coordinator pool-miner; do
+    for deploy in worker-standalone worker-pool-coordinator worker-pool-miner-1 worker-pool-miner-2 worker-pool-miner-3; do
         kubectl rollout status -n "$NAMESPACE_K3S" \
             "deployment/$deploy" --timeout=120s || warn "rollout de $deploy no completó"
     done
@@ -240,6 +254,7 @@ deploy_k3s() {
     info "Estado final:"
     kubectl get pods -n "$NAMESPACE_K3S" -o wide
 }
+
 
 
 # ── main ──────────────────────────────────────────────────────

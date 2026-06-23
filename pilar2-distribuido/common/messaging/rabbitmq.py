@@ -27,6 +27,7 @@ from .base import (
     HEARTBEAT_ROUTING_KEY,
     HEARTBEAT_BINDING_KEY,
     EXCHANGE_POOL_ELECTION,
+    EXCHANGE_WORKER_COMMAND,
 )
 
 log = logging.getLogger("voxchain.messaging")
@@ -80,6 +81,8 @@ class RabbitMQMessaging(Messaging):
                             durable=True)
         ch.exchange_declare(exchange=EXCHANGE_POOL_ELECTION, exchange_type="topic",
                             durable=True)
+        ch.exchange_declare(exchange=EXCHANGE_WORKER_COMMAND, exchange_type="topic",
+                            durable=True)
         ch.basic_qos(prefetch_count=1)
 
     def is_healthy(self) -> bool:
@@ -107,6 +110,8 @@ class RabbitMQMessaging(Messaging):
         self._publish(EXCHANGE_HEARTBEAT, HEARTBEAT_ROUTING_KEY, hb)
     def publish_pool_election(self, pool_id: str, msg: dict):
         self._publish(EXCHANGE_POOL_ELECTION, f"{pool_id}.{msg.get('type', 'unknown')}", msg)
+    def publish_worker_command(self, worker_id: str, command: dict):
+        self._publish(EXCHANGE_WORKER_COMMAND, str(worker_id), command)
 
     # -- suscripción --------------------------------------------------------
     # Registrar un handler también arranca el consumidor si ya estamos en el
@@ -123,6 +128,12 @@ class RabbitMQMessaging(Messaging):
         self._handlers[stream] = handler
         if self._consuming:
             self._start_pool_election_consumer(stream, pool_id)
+
+    def on_worker_command(self, worker_id: str, handler: Callable[[dict], None]) -> None:
+        stream = f"{EXCHANGE_WORKER_COMMAND}.{worker_id}"
+        self._handlers[stream] = handler
+        if self._consuming:
+            self._start_worker_command_consumer(stream, worker_id)
 
     def unsubscribe_pool_election(self) -> None:
         for stream in list(self._handlers):
@@ -151,6 +162,20 @@ class RabbitMQMessaging(Messaging):
     def consumed_queues(self) -> set[str]:
         """Streams con consumidor activo (lo que realmente se está consumiendo)."""
         return set(self._consumer_tags)
+
+    def _start_worker_command_consumer(self, stream: str, worker_id: str) -> None:
+        if stream in self._consumer_tags:
+            return
+        handler = self._handlers.get(stream)
+        if handler is None:
+            return
+        result = self._ch.queue_declare(queue="", exclusive=True)
+        qname = result.method.queue
+        self._ch.queue_bind(exchange=EXCHANGE_WORKER_COMMAND, queue=qname,
+                            routing_key=worker_id)
+        tag = self._ch.basic_consume(queue=qname,
+                                     on_message_callback=self._wrap(handler))
+        self._consumer_tags[stream] = tag
 
     def _start_pool_election_consumer(self, stream: str, pool_id: str) -> None:
         if stream in self._consumer_tags:
@@ -190,6 +215,9 @@ class RabbitMQMessaging(Messaging):
             if stream.startswith(EXCHANGE_POOL_ELECTION):
                 pool_id = stream.split(".", 2)[-1]
                 self._start_pool_election_consumer(stream, pool_id)
+            elif stream.startswith(EXCHANGE_WORKER_COMMAND):
+                worker_id = stream.split(".", 2)[-1]
+                self._start_worker_command_consumer(stream, worker_id)
             else:
                 self._start_consumer(stream)
 

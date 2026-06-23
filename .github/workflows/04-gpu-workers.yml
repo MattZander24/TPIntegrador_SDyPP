@@ -48,15 +48,27 @@ jobs:
             -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
           echo "RABBITMQ_HOST=${IP:-placeholder.voxchain.local}" >> $GITHUB_OUTPUT
 
+      - name: Get Redis ClusterIP (for k3s worker status reporting)
+        id: redis
+        run: |
+          IP=$(kubectl get svc -n voxchain redis \
+            -o jsonpath='{.spec.clusterIP}' 2>/dev/null || echo "")
+          if [[ -z "$IP" ]]; then
+            IP=$(kubectl get svc -n voxchain redis \
+              -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+          fi
+          echo "REDIS_HOST=${IP:-}" >> $GITHUB_OUTPUT
+
       - name: Create namespace
         run: |
           kubectl apply -f ${{ env.K8S_DIR }}/namespace.yaml
 
-      - name: Configure RabbitMQ host
+      - name: Configure RabbitMQ and Redis hosts
         run: |
           kubectl create configmap worker-config \
             --namespace ${{ env.NAMESPACE }} \
             --from-literal=rabbitmq-host="${{ steps.rabbitmq.outputs.RABBITMQ_HOST }}" \
+            --from-literal=redis-host="${{ steps.redis.outputs.REDIS_HOST }}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Deploy secrets
@@ -79,18 +91,19 @@ jobs:
             --from-literal=keda-host="${KEDA_HOST}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Deploy worker manifests
+      - name: Deploy RBAC and configmaps
         run: |
-          kubectl apply -f ${{ env.K8S_DIR }}/worker-deployment.yaml
-          kubectl apply -f ${{ env.K8S_DIR }}/worker-hpa.yaml
-          kubectl apply -f ${{ env.K8S_DIR }}/pool-coordinator-deployment.yaml
-          kubectl apply -f ${{ env.K8S_DIR }}/pool-coordinator-service.yaml
-          kubectl apply -f ${{ env.K8S_DIR }}/pool-miner-deployment.yaml
-          kubectl apply -f ${{ env.K8S_DIR }}/pool-miner-hpa.yaml
+          kubectl apply -f ${{ env.K8S_DIR }}/worker-rbac.yaml
+          kubectl apply -f ${{ env.K8S_DIR }}/backend-proxy-rbac.yaml
+          kubectl apply -f ${{ env.K8S_DIR }}/worker-modes-configmap.yaml
+
+      - name: Deploy demo worker nodes (5 nodes for demo scenario)
+        run: |
+          kubectl apply -f ${{ env.K8S_DIR }}/demo-deployments.yaml
 
       - name: Verify deployments
         run: |
-          for deploy in worker pool-coordinator pool-miner; do
+          for deploy in worker-standalone worker-pool-coordinator worker-pool-miner-1 worker-pool-miner-2 worker-pool-miner-3; do
             kubectl rollout status \
               -n ${{ env.NAMESPACE }} \
               deployment/$deploy \
