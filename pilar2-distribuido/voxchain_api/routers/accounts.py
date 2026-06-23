@@ -16,27 +16,27 @@ DEMO_ACCOUNTS = {
     "valentin": {
         "worker_id": "worker-standalone",
         "mode": "standalone",
-        "pubkey": "demo_valentin_pubkey_placeholder",  # TODO: Replace with actual pubkey from worker
+        "pubkey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEK+zAT5RDdx+IZeFJyMt5n+Sq3bofPSTONUdH0rIoafqek0B9z2+Ce+KOpF4d7HF9MMCaEdvf79DuXgTyi6w1gg==",
     },
     "gustavo": {
         "worker_id": "worker-pool-coordinator",
         "mode": "pool-coordinator",
-        "pubkey": "demo_gustavo_pubkey_placeholder",
+        "pubkey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAESZSf6/KLGtCWzykPJNwplTtLIXfV7Q8bWzCXpSt0UXdDUwRGoRMCipOtVppZ5+OK8h5Rth5HpbUFgdNa4hz+Qg==",
     },
     "matt": {
         "worker_id": "worker-pool-miner-1",
         "mode": "pool-worker",
-        "pubkey": "demo_matt_pubkey_placeholder",
+        "pubkey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEgjnoP4I9rGjo0m4AdnXvtiSKArLmVQwW0QPJ4/psGbysWgLDKuQZcLkRkZOqrV7405qF5mIxfDfU8xjQgHEQig==",
     },
     "profesor1": {
         "worker_id": "worker-pool-miner-2",
         "mode": "pool-worker",
-        "pubkey": "demo_profesor1_pubkey_placeholder",
+        "pubkey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEfixrZ70q1AbkT9XkjN4A+7BnasOneDR157dLyF0ITlFwLKhuFc3WfcGxupm9xY4XXZay6BIRSwzUNCJZHGFAcw==",
     },
     "profesor2": {
         "worker_id": "worker-pool-miner-3",
         "mode": "pool-worker",
-        "pubkey": "demo_profesor2_pubkey_placeholder",
+        "pubkey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEe7p253GK4YRVqNZ2AVTfex6Wv4lIFRNTusdMlRT416cMTQr2WrvDSE3LPG4BiUXEIzwP53R0aVTp5uOfUfXmVQ==",
     },
 }
 
@@ -46,7 +46,7 @@ REDIS_KEY_PREFIX = "demo_account:"
 def get_account_state(redis: RedisReader, username: str) -> Optional[dict]:
     """Get account state from Redis."""
     key = f"{REDIS_KEY_PREFIX}{username}"
-    data = redis.store.redis_client.get(key)
+    data = redis.store.r.get(key)
     if data:
         import json
         return json.loads(data)
@@ -57,7 +57,7 @@ def set_account_state(redis: RedisReader, username: str, state: dict):
     """Set account state in Redis with TTL (30 minutes)."""
     key = f"{REDIS_KEY_PREFIX}{username}"
     import json
-    redis.store.redis_client.setex(key, 1800, json.dumps(state))  # 30 min TTL
+    redis.store.r.setex(key, 1800, json.dumps(state))  # 30 min TTL
 
 
 @router.get("", response_model=list[DemoAccount])
@@ -156,7 +156,7 @@ async def release_account(request: ReleaseAccountRequest):
     
     # Release the account
     key = f"{REDIS_KEY_PREFIX}{request.username}"
-    redis.store.redis_client.delete(key)
+    redis.store.r.delete(key)
     
     return {"status": "released", "username": request.username}
 

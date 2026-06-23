@@ -173,9 +173,13 @@ export class ProposeLawComponent {
       const text_hash = await this.identityService.sha256Hex(text);
       const created_at = new Date().toISOString();
 
-      // Mensaje canónico: debe coincidir byte a byte con proposal_message() del backend.
-      const message = `${id.pubkey}|${this.action}|${text_hash}|${law_id}|${created_at}`;
-      const signature = await this.identityService.sign(message);
+      // En modo demo la clave privada está en el worker (backend); se envía sin firma.
+      // REQUIRE_SIGNATURES=false en el backend acepta signature vacío.
+      let signature = '';
+      if (!this.identityService.isDemoMode()) {
+        const message = `${id.pubkey}|${this.action}|${text_hash}|${law_id}|${created_at}`;
+        signature = await this.identityService.sign(message);
+      }
 
       const payload: any = {
         author_pubkey: id.pubkey,
