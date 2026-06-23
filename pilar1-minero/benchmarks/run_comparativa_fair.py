@@ -1,4 +1,3 @@
-```python
 import subprocess, time
 
 BASE = "hola"
@@ -28,4 +27,3 @@ for prefix, timeout in PREFIXES_TIMES.items():
 
     if gpu_rate > 0 and cpu_rate > 0:
         print(f"Speedup: {gpu_rate/cpu_rate:.0f}x")
-```
