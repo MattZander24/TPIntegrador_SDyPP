@@ -10,6 +10,7 @@ Hot-switch entre modos vía POST /switch-mode en puerto admin (9090).
 
 from __future__ import annotations
 
+import logging
 import os
 import signal
 import socket
@@ -28,6 +29,8 @@ from worker_pkg.standalone_worker import StandaloneWorker
 from worker_pkg.worker import Worker
 import logging
 log = logging.getLogger("worker")
+
+log = logging.getLogger("voxchain.worker")
 
 
 class WorkerManager:
@@ -172,7 +175,7 @@ class WorkerManager:
 
 def main() -> None:
     signal.signal(signal.SIGTERM, lambda *_: None)
-    log = setup_logging("worker")
+    setup_logging("worker")
     worker_id = os.getenv("WORKER_ID", f"worker-{socket.gethostname()}")
     has_gpu = _gpu_available(os.getenv("MINER_GPU_BIN", ""))
     mode = os.getenv("WORKER_MODE", "standalone")
@@ -188,8 +191,6 @@ def main() -> None:
     admin_thread.start()
 
     start_health_server(config.HEALTH_PORT, lambda: {
-        "worker_id": worker_id,
-        "mode": manager._mode,
         "status": "ok",
     })
 

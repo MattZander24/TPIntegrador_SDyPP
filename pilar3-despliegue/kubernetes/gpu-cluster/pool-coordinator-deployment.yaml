@@ -25,25 +25,8 @@ spec:
             - containerPort: 9001
               name: http
           env:
-            - name: RABBITMQ_USER
-              valueFrom:
-                secretKeyRef:
-                  name: rabbitmq-credentials
-                  key: username
-            - name: RABBITMQ_PASS
-              valueFrom:
-                secretKeyRef:
-                  name: rabbitmq-credentials
-                  key: password
-            - name: RABBITMQ_HOST
-              valueFrom:
-                configMapKeyRef:
-                  name: worker-config
-                  key: rabbitmq-host
             - name: RABBITMQ_URL
-              value: "amqps://$(RABBITMQ_USER):$(RABBITMQ_PASS)@$(RABBITMQ_HOST):5671/"
-            - name: RABBITMQ_TLS_CA_PATH
-              value: /etc/ssl/certs/ca.crt
+              value: "amqp://guest:guest@rabbitmq.voxchain.svc.cluster.local:5672/"
             - name: REDIS_URL
               value: "redis://redis:6379/0"
             - name: WORKER_MODE
@@ -62,12 +45,3 @@ spec:
               port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10
-          volumeMounts:
-            - name: ca-cert
-              mountPath: /etc/ssl/certs/ca.crt
-              subPath: ca.crt
-              readOnly: true
-      volumes:
-        - name: ca-cert
-          secret:
-            secretName: rabbitmq-ca
